@@ -156,7 +156,9 @@ def main() -> int:
         print(f"==> {benchmark_id}")
         if benchmark_id in raw_dir_overrides:
             attach_existing_raw_dir(data_root, benchmark_id, raw_dir_overrides[benchmark_id])
-        adapter.ensure_data(data_root)
+            print(f"[skip-download] using provided raw dir for {benchmark_id}")
+        else:
+            adapter.ensure_data(data_root)
         if benchmark_id == "360loc" and not args.skip_360loc_download:
             download_360loc(data_root)
         manifest = adapter.build_manifest(data_root, split="test")

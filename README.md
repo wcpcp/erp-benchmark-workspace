@@ -54,6 +54,8 @@ uv run --project benchmark python benchmark/scripts/prepare_benchmarks.py \
 
 - `benchmark_id=/absolute/path/to/raw_dir`
 
+只要传了 `--raw-dir`，脚本就会直接复用该目录并跳过下载步骤。
+
 对 `hstar-bench-erp`，`--raw-dir` 既可以指向：
 
 - 含有 `hos_bench.zip` / `hps_bench.zip` 的原始目录
