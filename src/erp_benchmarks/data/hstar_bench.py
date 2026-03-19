@@ -11,6 +11,21 @@ from ..utils.hstar_protocol import build_hstar_protocol_records, extract_hstar_a
 from ..utils.io import dump_json
 
 
+def _resolve_hstar_source_root(raw_dir: Path, extract_root: Path) -> tuple[Path, dict[str, Path], bool]:
+    extracted = extract_hstar_archives(raw_dir, extract_root)
+    if extracted:
+        return extract_root, extracted, True
+
+    # Some users already store the extracted H*Bench tree instead of the zip files.
+    if any(raw_dir.rglob("annotation.json")):
+        return raw_dir, {"pre_extracted": raw_dir}, False
+
+    raise FileNotFoundError(
+        "H*Bench data not found. Expected either hos_bench.zip/hps_bench.zip inside "
+        f"{raw_dir} or an extracted tree containing annotation.json files."
+    )
+
+
 class HstarBenchDataset(DatasetAdapter):
     benchmark_id = "hstar-bench"
     task_type = "search"
@@ -42,16 +57,15 @@ class HstarBenchDataset(DatasetAdapter):
             str(raw_dir / "hos_bench.zip"),
             str(raw_dir / "hps_bench.zip"),
         ]
-        extracted = extract_hstar_archives(raw_dir, extract_root)
+        source_root, extracted, used_archives = _resolve_hstar_source_root(raw_dir, extract_root)
         protocol_manifests: dict[str, str] = {}
-        if extracted:
-            records_by_protocol = build_hstar_protocol_records(extract_root)
-            for protocol, rows in records_by_protocol.items():
-                path = manifests_root / f"{protocol}.jsonl"
-                with path.open("w", encoding="utf-8") as handle:
-                    for row in rows:
-                        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-                protocol_manifests[protocol] = str(path)
+        records_by_protocol = build_hstar_protocol_records(source_root)
+        for protocol, rows in records_by_protocol.items():
+            path = manifests_root / f"{protocol}.jsonl"
+            with path.open("w", encoding="utf-8") as handle:
+                for row in rows:
+                    handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            protocol_manifests[protocol] = str(path)
 
         payload = {
             "benchmark": self.benchmark_id,
@@ -60,7 +74,7 @@ class HstarBenchDataset(DatasetAdapter):
                 "hps_bench.zip. The unified workspace now tracks both the original "
                 "perspective multi-turn protocol and rotated-ERP submit manifests."
             ),
-            "archives": archives,
+            "archives": archives if used_archives else [],
             "extracted_dirs": {name: str(path) for name, path in extracted.items()},
             "protocol_manifests": protocol_manifests,
         }
@@ -107,18 +121,22 @@ class HstarBenchErpDataset(HstarBenchDataset):
         manifests_root = data_root / self.benchmark_id / "manifests"
         manifests_root.mkdir(parents=True, exist_ok=True)
 
-        extracted = extract_hstar_archives(raw_dir, extract_root)
-        if extracted:
-            records_by_protocol = build_hstar_protocol_records(extract_root)
-            for protocol, rows in records_by_protocol.items():
-                path = manifests_root / f"{protocol}.jsonl"
-                with path.open("w", encoding="utf-8") as handle:
-                    for row in rows:
-                        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+        source_root, _, _ = _resolve_hstar_source_root(raw_dir, extract_root)
+        records_by_protocol = build_hstar_protocol_records(source_root)
+        for protocol, rows in records_by_protocol.items():
+            path = manifests_root / f"{protocol}.jsonl"
+            with path.open("w", encoding="utf-8") as handle:
+                for row in rows:
+                    handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
         split_to_manifest = {
             "test": manifests_root / "erp_rotated_submit.jsonl",
             "erp_rotated_submit": manifests_root / "erp_rotated_submit.jsonl",
             "perspective_multiturn": manifests_root / "perspective_multiturn.jsonl",
         }
-        return split_to_manifest.get(split_key, manifests_root / f"{split_key}.jsonl")
+        manifest_path = split_to_manifest.get(split_key, manifests_root / f"{split_key}.jsonl")
+        if not manifest_path.exists():
+            raise FileNotFoundError(
+                f"H*Bench manifest was not generated as expected: {manifest_path}"
+            )
+        return manifest_path

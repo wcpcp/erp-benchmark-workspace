@@ -54,6 +54,11 @@ uv run --project benchmark python benchmark/scripts/prepare_benchmarks.py \
 
 - `benchmark_id=/absolute/path/to/raw_dir`
 
+对 `hstar-bench-erp`，`--raw-dir` 既可以指向：
+
+- 含有 `hos_bench.zip` / `hps_bench.zip` 的原始目录
+- 也可以直接指向已经解压好的 H*Bench 目录树
+
 对于 `hstar-bench-erp`，`prepare_benchmarks.py` 已经会直接生成协议 manifest，不需要再单独跑别的准备脚本。
 
 会生成：
