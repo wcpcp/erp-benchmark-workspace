@@ -114,17 +114,10 @@ def main() -> int:
             20,
         ),
         (
-            "hstar-bench-erp-submit",
-            DATA / "hstar-bench-erp" / "manifests" / "erp_direct_submit.jsonl",
-            DATA / "hstar-bench-erp" / "manifests" / "smoke_direct_submit_20.jsonl",
-            TEMPLATES / "predictions_hstar_erp_submit_smoke_template.jsonl",
-            20,
-        ),
-        (
-            "hstar-bench-erp-initial-action",
-            DATA / "hstar-bench-erp" / "manifests" / "erp_direct_initial_action.jsonl",
-            DATA / "hstar-bench-erp" / "manifests" / "smoke_initial_action_20.jsonl",
-            TEMPLATES / "predictions_hstar_erp_initial_action_smoke_template.jsonl",
+            "hstar-bench-erp-rotated-submit",
+            DATA / "hstar-bench-erp" / "manifests" / "erp_rotated_submit.jsonl",
+            DATA / "hstar-bench-erp" / "manifests" / "smoke_rotated_submit_20.jsonl",
+            TEMPLATES / "predictions_hstar_erp_rotated_submit_smoke_template.jsonl",
             20,
         ),
     ]
@@ -133,10 +126,8 @@ def main() -> int:
         if src.exists():
             rows = load_jsonl(src)[:limit]
         else:
-            if name == "hstar-bench-erp-submit":
+            if name == "hstar-bench-erp-rotated-submit":
                 rows = load_jsonl(EXAMPLES / "hstar_erp_submit_manifest.jsonl")
-            elif name == "hstar-bench-erp-initial-action":
-                rows = load_jsonl(EXAMPLES / "hstar_erp_initial_action_manifest.jsonl")
             else:
                 report[name] = {"status": "skipped", "reason": f"missing source manifest: {src}"}
                 continue

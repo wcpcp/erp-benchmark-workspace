@@ -1,100 +1,78 @@
-# H*Bench Unified Protocols
+# H*Bench-ERP Protocol
 
-This note defines how `H*Bench` is represented inside the unified benchmark
-workspace.
+`H*Bench-ERP` is the ERP-native variant used in this workspace.
 
-## Why two protocols are kept
+## What is kept
 
-The official `H*Bench` setup is not a single-image QA benchmark. It is a
-stateful environment:
+- `perspective_multiturn`
+  - close to the official H* setup
+  - useful when you want to compare repeated perspective rotations
 
-- one ERP panorama is stored per scene
-- the environment renders a perspective crop from the ERP panorama according to
-  the current `(yaw, pitch)`
-- the model takes one action at a time
-- the model eventually calls `submit(yaw,pitch)`
+- `erp_rotated_submit`
+  - the main ERP-native protocol for this project
+  - each sampled initial yaw rotates the ERP input itself
+  - the question text stays the same
+  - the gold target yaw is rotated into the current ERP image coordinate system
+  - the model only outputs `submit(yaw,pitch)`
 
-For your project, we keep both:
+## Main idea
 
-1. `perspective_multiturn`
-   - close to the official benchmark
-   - useful for comparing repeated perspective rotations
+For ERP input, changing the initial yaw is not just metadata.
 
-2. `erp_direct`
-   - your ERP-native variant
-   - useful for testing whether a model can solve the same task directly from
-     the full ERP panorama
+If the ERP panorama is horizontally rotated by `delta_yaw`, then the answer must
+rotate with it:
 
-## Manifest files
+- `yaw_rotated = normalize(yaw_original - delta_yaw)`
+- `pitch_rotated = pitch_original`
+
+This protocol therefore measures:
+
+- ERP-native final direction prediction
+- rotation consistency
+- object/path search under full-panorama input
+
+It does not measure intermediate `rotate(...)` policy quality.
+
+## Generated files
 
 After:
 
 ```bash
-uv run --project benchmark python benchmark/scripts/prepare_hstar_protocols.py
+uv run --project benchmark python benchmark/scripts/prepare_benchmarks.py \
+  --benchmarks hstar-bench-erp
 ```
 
-the data directory will expose:
+the workspace generates:
 
-- `benchmark/data/hstar-bench/manifests/perspective_multiturn.jsonl`
-- `benchmark/data/hstar-bench/manifests/erp_direct_initial_action.jsonl`
-- `benchmark/data/hstar-bench/manifests/erp_direct_submit.jsonl`
-- `benchmark/data/hstar-bench/manifests/test.json`
+- `benchmark/data/hstar-bench-erp/manifests/erp_rotated_submit.jsonl`
+- `benchmark/data/hstar-bench-erp/manifests/perspective_multiturn.jsonl`
 
-## Protocols
+If you create smoke subsets:
 
-### `perspective_multiturn`
+```bash
+uv run --project benchmark python benchmark/scripts/create_smoke_subsets.py
+```
 
-Fields:
+it also generates:
 
-- `image_path`: original ERP panorama
-- `start_yaw`, `start_pitch`
-- `instruction`
-- `target_yaw`, `target_pitch`
-- `render_config`: perspective renderer config
-- `preferred_submit`
-
-This manifest is intended for stateful evaluation pipelines.
-
-### `erp_direct_initial_action`
-
-Fields:
-
-- full ERP input
-- current agent direction provided in text
-- answer format: one action, usually `rotate(dyaw,dpitch)` or `submit(yaw,pitch)`
-
-This variant measures whether full ERP context lets the model choose a better
-first action than a perspective-only setup.
-
-### `erp_direct_submit`
-
-Fields:
-
-- full ERP input
-- answer format: `submit(yaw,pitch)`
-
-This variant measures whether the model can directly infer the target direction
-from the ERP panorama without iterative perspective search.
+- `benchmark/data/hstar-bench-erp/manifests/smoke_rotated_submit_20.jsonl`
 
 ## Evaluation
 
-Original `H*Bench`:
+The ERP-native protocol only accepts final answers:
 
 ```bash
-uv run --project benchmark python benchmark/scripts/run_benchmark.py evaluate \
-  --benchmark hstar-bench \
-  --predictions /path/to/exported_metrics.jsonl
+submit(yaw,pitch)
 ```
 
-ERP-direct:
+Evaluation checks whether the submitted yaw/pitch falls inside the rotated
+target window.
+
+Example:
 
 ```bash
 uv run --project benchmark python benchmark/scripts/run_benchmark.py evaluate \
   --benchmark hstar-bench-erp \
-  --references benchmark/data/hstar-bench/manifests/erp_direct_submit.jsonl \
+  --references benchmark/data/hstar-bench-erp/manifests/erp_rotated_submit.jsonl \
   --predictions /path/to/predictions.jsonl
 ```
-
-For `erp_direct_initial_action`, rotate predictions are counted as effective if
-they reduce angular distance to the target window.
-

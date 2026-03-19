@@ -9,6 +9,7 @@ tmp_hstar_extract/
 # Downloaded raw benchmark assets
 data/*/raw/
 data/*/extracted/
+data/*/rotated_erp/
 !data/*/manifests/
 !data/*/manifests/**
 data/*/manifests/test.jsonl

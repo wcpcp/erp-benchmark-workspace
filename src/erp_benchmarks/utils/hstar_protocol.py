@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 
 ACTION_RE = re.compile(r"(rotate|submit)\s*\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)", re.IGNORECASE)
 
@@ -76,16 +78,6 @@ def canonical_submit(target_yaw: list[float], target_pitch: list[float]) -> str:
     return f"submit({yaw},{pitch})"
 
 
-def preferred_initial_action(start_yaw: float, start_pitch: float, target_yaw: list[float], target_pitch: list[float]) -> str:
-    if yaw_in_range(start_yaw, target_yaw) and pitch_in_range(start_pitch, target_pitch):
-        return canonical_submit(target_yaw, target_pitch)
-    center_yaw = yaw_interval_center(target_yaw)
-    center_pitch = (float(target_pitch[0]) + float(target_pitch[1])) / 2.0
-    delta_yaw = int(round(wrap_signed_delta(start_yaw, center_yaw)))
-    delta_pitch = int(round(center_pitch - float(start_pitch)))
-    return f"rotate({delta_yaw},{delta_pitch})"
-
-
 def parse_action(text: Any) -> ParsedAction | None:
     if text is None:
         return None
@@ -97,6 +89,39 @@ def parse_action(text: Any) -> ParsedAction | None:
         yaw=int(match.group(2)),
         pitch=int(match.group(3)),
     )
+
+
+def rotate_relative_yaw(angle: float, start_yaw: float) -> float:
+    return normalize_yaw(float(angle) - float(start_yaw))
+
+
+def rotate_yaw_range(target_range: list[float], start_yaw: float) -> list[float]:
+    return [
+        rotate_relative_yaw(float(target_range[0]), start_yaw),
+        rotate_relative_yaw(float(target_range[1]), start_yaw),
+    ]
+
+
+def build_rotated_erp_image(source_path: Path, output_path: Path, start_yaw: float) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists():
+        return output_path
+
+    with Image.open(source_path) as image:
+        image = image.convert("RGB")
+        width, _ = image.size
+        shift_px = int(round((float(start_yaw) % 360.0) / 360.0 * width)) % width
+        if shift_px == 0:
+            image.save(output_path)
+            return output_path
+
+        left = image.crop((shift_px, 0, width, image.height))
+        right = image.crop((0, 0, shift_px, image.height))
+        rotated = Image.new(image.mode, image.size)
+        rotated.paste(left, (0, 0))
+        rotated.paste(right, (width - shift_px, 0))
+        rotated.save(output_path)
+    return output_path
 
 
 def extract_hstar_archives(raw_dir: Path, extract_root: Path) -> dict[str, Path]:
@@ -168,8 +193,8 @@ def iter_episode_sources(extract_root: Path) -> list[dict[str, Any]]:
 def build_hstar_protocol_records(extract_root: Path) -> dict[str, list[dict[str, Any]]]:
     episodes = iter_episode_sources(extract_root)
     perspective_records: list[dict[str, Any]] = []
-    erp_initial_records: list[dict[str, Any]] = []
     erp_submit_records: list[dict[str, Any]] = []
+    rotated_root = extract_root.parent / "rotated_erp"
 
     for episode in episodes:
         perspective_records.append(
@@ -193,50 +218,44 @@ def build_hstar_protocol_records(extract_root: Path) -> dict[str, list[dict[str,
                 "preferred_submit": canonical_submit(episode["target_yaw"], episode["target_pitch"]),
             }
         )
-
-        erp_initial_records.append(
-            {
-                **episode,
-                "protocol": "erp_direct",
-                "task_variant": "initial_action",
-                "question": (
-                    f"You are given one full ERP panorama. The current forward direction is yaw {int(round(episode['start_yaw']))} "
-                    f"and pitch {int(round(episode['start_pitch']))}. Human instruction: {episode['instruction']} "
-                    "Output exactly one action: rotate(yaw,pitch) or submit(yaw,pitch)."
-                ),
-                "prompt": (
-                    f"ERP panorama input. Current direction: ({int(round(episode['start_yaw']))},"
-                    f"{int(round(episode['start_pitch']))}). Task: {episode['instruction']}. "
-                    "Return exactly one action."
-                ),
-                "answer": preferred_initial_action(
-                    episode["start_yaw"],
-                    episode["start_pitch"],
-                    episode["target_yaw"],
-                    episode["target_pitch"],
-                ),
-                "success_rule": "action reduces angular distance or directly submits inside target window",
-            }
+        source_path = Path(str(episode["image_path"]))
+        rotated_name = (
+            f"{episode['task_family']}__{episode['scene_name']}__yaw"
+            f"{int(round(float(episode['start_yaw']))):03d}{source_path.suffix.lower()}"
         )
+        rotated_image_path = build_rotated_erp_image(
+            source_path,
+            rotated_root / rotated_name,
+            float(episode["start_yaw"]),
+        )
+        rotated_target_yaw = rotate_yaw_range(episode["target_yaw"], episode["start_yaw"])
 
         erp_submit_records.append(
             {
                 **episode,
-                "protocol": "erp_direct",
-                "task_variant": "direct_submit",
+                "protocol": "erp_rotated",
+                "task_variant": "rotated_submit",
+                "original_image_path": episode["image_path"],
+                "image_path": str(rotated_image_path),
+                "rotation_delta_yaw": float(episode["start_yaw"]),
+                "answer_coordinate_system": "rotated_erp_image_coordinates",
+                "target_yaw_original": list(episode["target_yaw"]),
+                "target_yaw": rotated_target_yaw,
                 "question": (
-                    f"You are given one full ERP panorama. Human instruction: {episode['instruction']} "
-                    "Output the final target direction as submit(yaw,pitch)."
+                    f"You are given one full ERP panorama whose forward direction has been re-centered to the current initial yaw. "
+                    f"Human instruction: {episode['instruction']} Output the final target direction in this ERP image's coordinate "
+                    "system as submit(yaw,pitch)."
                 ),
-                "prompt": f"ERP panorama input. Task: {episode['instruction']}. Return submit(yaw,pitch).",
-                "answer": canonical_submit(episode["target_yaw"], episode["target_pitch"]),
-                "success_rule": "submitted yaw/pitch falls inside target window",
+                "prompt": (
+                    f"Rotated ERP panorama input. Task: {episode['instruction']}. "
+                    "Return the final target direction in the current ERP image coordinates as submit(yaw,pitch)."
+                ),
+                "answer": canonical_submit(rotated_target_yaw, episode["target_pitch"]),
+                "success_rule": "submitted yaw/pitch falls inside the rotated target window",
             }
         )
 
     return {
         "perspective_multiturn": perspective_records,
-        "erp_direct_initial_action": erp_initial_records,
-        "erp_direct_submit": erp_submit_records,
+        "erp_rotated_submit": erp_submit_records,
     }
-

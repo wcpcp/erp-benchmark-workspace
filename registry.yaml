@@ -114,10 +114,11 @@
       "modality": "ERP-direct search benchmark",
       "primary_focus": "ERP-native object search and path search without perspective-only observation bottlenecks",
       "benchmark_type": "ERP-direct search / action benchmark",
+      "benchmark_type": "ERP-rotated final-direction benchmark",
       "notes": [
         "This is a derived benchmark protocol built from the official H*Bench release.",
-        "It keeps the original target windows and instructions but replaces multi-turn perspective-only observation with ERP-direct input.",
-        "The unified workspace keeps both the original perspective protocol and the ERP-direct protocol for controlled comparison."
+        "It keeps the original target windows and instructions but replaces multi-turn perspective-only observation with rotated ERP input.",
+        "The unified workspace keeps both the original perspective protocol and the rotated-ERP submit protocol for controlled comparison."
       ],
       "sources": [
         {
@@ -134,16 +135,13 @@
         }
       ],
       "abilities": [
-        "ERP-direct target search",
-        "ERP-direct first-action selection",
-        "ERP-direct heading prediction for object and path search"
+        "ERP-native target search",
+        "rotation-consistent heading prediction",
+        "final target yaw/pitch prediction for object and path search"
       ],
       "subtasks": {
-        "erp_direct_initial_action": {
-          "ability": "predict a useful first action from the full ERP panorama"
-        },
-        "erp_direct_submit": {
-          "ability": "predict the final target yaw and pitch directly from the full ERP panorama"
+        "erp_rotated_submit": {
+          "ability": "predict the final target yaw and pitch in the rotated ERP image coordinate system"
         }
       }
     },

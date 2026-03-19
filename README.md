@@ -54,16 +54,12 @@ uv run --project benchmark python benchmark/scripts/prepare_benchmarks.py \
 
 - `benchmark_id=/absolute/path/to/raw_dir`
 
-如果你要确保 `hstar-bench-erp` 的协议 manifest 也生成好，再跑：
-
-```bash
-uv run --project benchmark python benchmark/scripts/prepare_hstar_protocols.py --download
-```
+对于 `hstar-bench-erp`，`prepare_benchmarks.py` 已经会直接生成协议 manifest，不需要再单独跑别的准备脚本。
 
 会生成：
 
-- `benchmark/data/hstar-bench-erp/manifests/erp_direct_submit.jsonl`
-- `benchmark/data/hstar-bench-erp/manifests/erp_direct_initial_action.jsonl`
+- `benchmark/data/hstar-bench-erp/manifests/erp_rotated_submit.jsonl`
+- `benchmark/data/hstar-bench-erp/manifests/perspective_multiturn.jsonl`
 
 ### OSR-Bench 先不要跑全量
 
@@ -87,8 +83,7 @@ uv run --project benchmark python benchmark/scripts/create_smoke_subsets.py
 - `benchmark/data/osr-bench/manifests/smoke_20.jsonl`
 - `benchmark/data/panoenv/manifests/smoke_20.jsonl`
 - `benchmark/data/omnispatial/manifests/smoke_20.jsonl`
-- `benchmark/data/hstar-bench-erp/manifests/smoke_direct_submit_20.jsonl`
-- `benchmark/data/hstar-bench-erp/manifests/smoke_initial_action_20.jsonl`
+- `benchmark/data/hstar-bench-erp/manifests/smoke_rotated_submit_20.jsonl`
 
 ## 2. 生成预测
 
@@ -291,49 +286,26 @@ uv run --project benchmark python benchmark/scripts/predict_benchmark.py \
 
 ### 2.5 H*Bench-ERP 预测
 
-`direct_submit`
+`erp_rotated_submit`
 
 ```bash
 uv run --project benchmark python benchmark/scripts/predict_benchmark.py \
   --benchmark hstar-bench-erp \
   --model mlx-qwen-vl \
   --model-path benchmark/models/Qwen3-VL-4B-Instruct-4bit \
-  --references benchmark/data/hstar-bench-erp/manifests/erp_direct_submit.jsonl \
+  --references benchmark/data/hstar-bench-erp/manifests/erp_rotated_submit.jsonl \
   --predictions-out benchmark/results/hstar_erp_submit_predictions.jsonl \
   --skip-download
 ```
 
-`direct_submit` smoke
+`erp_rotated_submit` smoke
 
 ```bash
 uv run --project benchmark python benchmark/scripts/predict_benchmark.py \
   --benchmark hstar-bench-erp \
   --model mock \
-  --references benchmark/data/hstar-bench-erp/manifests/smoke_direct_submit_20.jsonl \
+  --references benchmark/data/hstar-bench-erp/manifests/smoke_rotated_submit_20.jsonl \
   --predictions-out benchmark/results/hstar_erp_submit_predictions_smoke.jsonl \
-  --skip-download
-```
-
-`initial_action`
-
-```bash
-uv run --project benchmark python benchmark/scripts/predict_benchmark.py \
-  --benchmark hstar-bench-erp \
-  --model mlx-qwen-vl \
-  --model-path benchmark/models/Qwen3-VL-4B-Instruct-4bit \
-  --references benchmark/data/hstar-bench-erp/manifests/erp_direct_initial_action.jsonl \
-  --predictions-out benchmark/results/hstar_erp_initial_action_predictions.jsonl \
-  --skip-download
-```
-
-`initial_action` smoke
-
-```bash
-uv run --project benchmark python benchmark/scripts/predict_benchmark.py \
-  --benchmark hstar-bench-erp \
-  --model mock \
-  --references benchmark/data/hstar-bench-erp/manifests/smoke_initial_action_20.jsonl \
-  --predictions-out benchmark/results/hstar_erp_initial_action_predictions_smoke.jsonl \
   --skip-download
 ```
 
@@ -429,35 +401,17 @@ uv run --project benchmark python benchmark/scripts/run_benchmark.py evaluate \
 ```bash
 uv run --project benchmark python benchmark/scripts/run_benchmark.py evaluate \
   --benchmark hstar-bench-erp \
-  --references benchmark/data/hstar-bench-erp/manifests/erp_direct_submit.jsonl \
+  --references benchmark/data/hstar-bench-erp/manifests/erp_rotated_submit.jsonl \
   --predictions benchmark/results/hstar_erp_submit_predictions.jsonl
 ```
 
-`direct_submit` smoke：
+`erp_rotated_submit` smoke：
 
 ```bash
 uv run --project benchmark python benchmark/scripts/run_benchmark.py evaluate \
   --benchmark hstar-bench-erp \
-  --references benchmark/data/hstar-bench-erp/manifests/smoke_direct_submit_20.jsonl \
-  --predictions benchmark/templates/predictions_hstar_erp_submit_smoke_template.jsonl
-```
-
-`initial_action`
-
-```bash
-uv run --project benchmark python benchmark/scripts/run_benchmark.py evaluate \
-  --benchmark hstar-bench-erp \
-  --references benchmark/data/hstar-bench-erp/manifests/erp_direct_initial_action.jsonl \
-  --predictions benchmark/results/hstar_erp_initial_action_predictions.jsonl
-```
-
-`initial_action` smoke：
-
-```bash
-uv run --project benchmark python benchmark/scripts/run_benchmark.py evaluate \
-  --benchmark hstar-bench-erp \
-  --references benchmark/data/hstar-bench-erp/manifests/smoke_initial_action_20.jsonl \
-  --predictions benchmark/templates/predictions_hstar_erp_initial_action_smoke_template.jsonl
+  --references benchmark/data/hstar-bench-erp/manifests/smoke_rotated_submit_20.jsonl \
+  --predictions benchmark/templates/predictions_hstar_erp_rotated_submit_smoke_template.jsonl
 ```
 
 ## 最小跑通流程

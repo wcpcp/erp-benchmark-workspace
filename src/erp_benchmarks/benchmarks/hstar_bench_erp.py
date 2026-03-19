@@ -7,7 +7,6 @@ from ..utils.hstar_protocol import (
     parse_action,
     pitch_distance_to_range,
     pitch_in_range,
-    wrap_signed_delta,
     yaw_distance_to_range,
     yaw_in_range,
 )
@@ -30,7 +29,6 @@ class HstarBenchErpBenchmark(BenchmarkAdapter):
         compared = 0
         correct = 0
         exact_match = 0
-        action_effective = 0
         yaw_errors: list[float] = []
         pitch_errors: list[float] = []
         missing = []
@@ -56,33 +54,26 @@ class HstarBenchErpBenchmark(BenchmarkAdapter):
 
             target_yaw = list(row["target_yaw"])
             target_pitch = list(row["target_pitch"])
-            start_yaw = float(row.get("start_yaw", 0.0))
-            start_pitch = float(row.get("start_pitch", 0.0))
-            variant = row.get("task_variant", "direct_submit")
+            if parsed.name != "submit":
+                if len(errors) < 10:
+                    errors.append(
+                        {
+                            "id": sample_id,
+                            "prediction": raw_prediction,
+                            "answer": gold,
+                            "reason": "submit_required",
+                        }
+                    )
+                continue
 
-            if parsed.name == "submit":
-                pred_yaw = parsed.yaw
-                pred_pitch = parsed.pitch
-                yaw_error = yaw_distance_to_range(pred_yaw, target_yaw)
-                pitch_error = pitch_distance_to_range(pred_pitch, target_pitch)
-                success = yaw_in_range(pred_yaw, target_yaw) and pitch_in_range(pred_pitch, target_pitch)
-                effective = success
-            else:
-                pred_yaw = start_yaw + parsed.yaw
-                pred_pitch = start_pitch + parsed.pitch
-                yaw_before = yaw_distance_to_range(start_yaw, target_yaw)
-                pitch_before = pitch_distance_to_range(start_pitch, target_pitch)
-                yaw_after = yaw_distance_to_range(pred_yaw, target_yaw)
-                pitch_after = pitch_distance_to_range(pred_pitch, target_pitch)
-                yaw_error = yaw_after
-                pitch_error = pitch_after
-                effective = (yaw_after + pitch_after) < (yaw_before + pitch_before)
-                success = False if variant == "direct_submit" else effective
+            pred_yaw = parsed.yaw
+            pred_pitch = parsed.pitch
+            yaw_error = yaw_distance_to_range(pred_yaw, target_yaw)
+            pitch_error = pitch_distance_to_range(pred_pitch, target_pitch)
+            success = yaw_in_range(pred_yaw, target_yaw) and pitch_in_range(pred_pitch, target_pitch)
 
             yaw_errors.append(float(yaw_error))
             pitch_errors.append(float(pitch_error))
-            if effective:
-                action_effective += 1
             if success:
                 correct += 1
             elif len(errors) < 10:
@@ -91,7 +82,7 @@ class HstarBenchErpBenchmark(BenchmarkAdapter):
                         "id": sample_id,
                         "prediction": raw_prediction,
                         "answer": gold,
-                        "variant": variant,
+                        "variant": row.get("task_variant", "rotated_submit"),
                         "yaw_error": yaw_error,
                         "pitch_error": pitch_error,
                     }
@@ -105,19 +96,17 @@ class HstarBenchErpBenchmark(BenchmarkAdapter):
             "num_correct": correct,
             "success_rate": correct / compared if compared else 0.0,
             "exact_match": exact_match / compared if compared else 0.0,
-            "action_effective_rate": action_effective / compared if compared else 0.0,
             "mean_abs_yaw_error": sum(yaw_errors) / len(yaw_errors) if yaw_errors else 0.0,
             "mean_abs_pitch_error": sum(pitch_errors) / len(pitch_errors) if pitch_errors else 0.0,
             "coverage": compared / len(references) if references else 0.0,
             "missing_prediction_ids": missing[:10],
             "example_errors": errors,
             "note": (
-                "This evaluates ERP-direct H*Bench variants. "
-                "For task_variant=initial_action, rotate actions are rewarded if they reduce angular distance. "
-                "For task_variant=direct_submit, predictions must submit inside the target window."
+                "This evaluates rotated-ERP H*Bench submit-only variants. "
+                "Each ERP input is horizontally rotated to match the sampled initial yaw, "
+                "and the gold target window is rotated into the same ERP image coordinate system."
             ),
         }
         if args.report:
             dump_json(args.report, report)
         return report
-
