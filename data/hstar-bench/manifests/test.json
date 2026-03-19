@@ -1,0 +1,10 @@
+{
+  "benchmark": "hstar-bench",
+  "note": "Official H* benchmark data is distributed as hos_bench.zip and hps_bench.zip. The unified workspace now tracks both the original perspective multi-turn protocol and ERP-direct protocol manifests.",
+  "archives": [
+    "/Users/wcp/code/erp_data_pipeline/benchmark/data/hstar-bench/raw/hos_bench.zip",
+    "/Users/wcp/code/erp_data_pipeline/benchmark/data/hstar-bench/raw/hps_bench.zip"
+  ],
+  "extracted_dirs": {},
+  "protocol_manifests": {}
+}

@@ -1,0 +1,15 @@
+[project]
+name = "erp-benchmark-qwen-mlx"
+version = "0.1.0"
+description = "Dedicated MLX-VLM runtime for Qwen VL benchmark smoke tests"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "mlx-vlm>=0.4.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = false

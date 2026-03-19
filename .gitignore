@@ -1,0 +1,28 @@
+.DS_Store
+.venv/
+tmp_hstar_extract/
+
+# Local credentials and caches
+.env.platform
+**/.cache/
+
+# Downloaded raw benchmark assets
+data/*/raw/
+data/*/extracted/
+!data/*/manifests/
+!data/*/manifests/**
+data/*/manifests/test.jsonl
+
+# Local prediction artifacts
+preds/
+results/
+reports/
+
+# Downloaded model weights
+models/
+
+# Vendored third-party repos
+_third_party/
+
+# MLX local env
+qwen_mlx/.venv/

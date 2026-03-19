@@ -1,0 +1,360 @@
+{
+  "benchmarks": {
+    "dense360-bench": {
+      "display_name": "Dense360-Bench",
+      "availability": "paper_only",
+      "status": "unavailable",
+      "modality": "equirectangular panorama",
+      "primary_focus": "ERP-native perception and dense panoramic understanding",
+      "benchmark_type": "benchmark survey entry",
+      "notes": [
+        "Public code or data was not found in this environment as of 2026-03-16.",
+        "Keep this entry as a gap analysis item until an official release appears."
+      ],
+      "sources": [
+        {
+          "type": "note",
+          "url": "pending"
+        }
+      ],
+      "abilities": [
+        "ERP distortion-aware perception",
+        "dense panoramic scene understanding"
+      ],
+      "subtasks": {}
+    },
+    "360loc": {
+      "display_name": "360Loc",
+      "availability": "public_code_and_data",
+      "status": "source_cloned",
+      "modality": "360 panorama to localization",
+      "primary_focus": "panoramic geolocalization and place recognition",
+      "benchmark_type": "localization",
+      "notes": [
+        "The official project page points to https://github.com/HuajianUP/360Loc and the repository has been cloned into benchmark/_third_party/360Loc.",
+        "The repository provides dataset processing scripts and a one-key downloader.",
+        "The local harness supports unified evaluation once you provide the official data and predictions."
+      ],
+      "sources": [
+        {
+          "type": "code",
+          "url": "https://github.com/HuajianUP/360Loc"
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2311.17389"
+        },
+        {
+          "type": "project",
+          "url": "https://huajianup.github.io/research/360Loc/"
+        }
+      ],
+      "abilities": [
+        "panoramic place recognition",
+        "global localization from 360 images",
+        "cross-view spatial grounding"
+      ],
+      "subtasks": {
+        "geolocalization": {
+          "ability": "estimate location from a 360 panorama"
+        },
+        "retrieval": {
+          "ability": "retrieve the correct nearby place or candidate view before localization"
+        }
+      }
+    },
+    "hstar-bench": {
+      "display_name": "H*Bench",
+      "availability": "public_dataset_and_code",
+      "status": "ready_via_huggingface_archives",
+      "modality": "360 panorama search benchmark",
+      "primary_focus": "humanoid object search and path search in 360 scenes",
+      "benchmark_type": "search / decision extension",
+      "notes": [
+        "Official Hugging Face dataset id: humanoid-vstar/hstar_bench.",
+        "The public release is packaged as hos_bench.zip and hps_bench.zip.",
+        "For your project, treat this as a search-oriented extension and consider an ERP-direct input variant rather than only the original perspective-observation setup."
+      ],
+      "sources": [
+        {
+          "type": "dataset",
+          "url": "https://huggingface.co/datasets/humanoid-vstar/hstar_bench"
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2511.20351"
+        },
+        {
+          "type": "project",
+          "url": "https://humanoid-vstar.github.io/"
+        },
+        {
+          "type": "code",
+          "url": "https://github.com/humanoid-vstar/hstar"
+        }
+      ],
+      "abilities": [
+        "object search from 360 perception",
+        "path search and decision making",
+        "search-oriented panoramic reasoning"
+      ],
+      "subtasks": {
+        "hos": {
+          "ability": "humanoid object search"
+        },
+        "hps": {
+          "ability": "humanoid path search"
+        }
+      }
+    },
+    "hstar-bench-erp": {
+      "display_name": "H*Bench-ERP",
+      "availability": "derived_from_public_hstar_bench",
+      "status": "protocol_adapter_ready",
+      "modality": "ERP-direct search benchmark",
+      "primary_focus": "ERP-native object search and path search without perspective-only observation bottlenecks",
+      "benchmark_type": "ERP-direct search / action benchmark",
+      "notes": [
+        "This is a derived benchmark protocol built from the official H*Bench release.",
+        "It keeps the original target windows and instructions but replaces multi-turn perspective-only observation with ERP-direct input.",
+        "The unified workspace keeps both the original perspective protocol and the ERP-direct protocol for controlled comparison."
+      ],
+      "sources": [
+        {
+          "type": "parent_dataset",
+          "url": "https://huggingface.co/datasets/humanoid-vstar/hstar_bench"
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2511.20351"
+        },
+        {
+          "type": "code",
+          "url": "https://github.com/humanoid-vstar/hstar"
+        }
+      ],
+      "abilities": [
+        "ERP-direct target search",
+        "ERP-direct first-action selection",
+        "ERP-direct heading prediction for object and path search"
+      ],
+      "subtasks": {
+        "erp_direct_initial_action": {
+          "ability": "predict a useful first action from the full ERP panorama"
+        },
+        "erp_direct_submit": {
+          "ability": "predict the final target yaw and pitch directly from the full ERP panorama"
+        }
+      }
+    },
+    "omnispatial": {
+      "display_name": "OmniSpatial",
+      "availability": "public_dataset",
+      "status": "ready_via_huggingface",
+      "modality": "image spatial reasoning QA",
+      "primary_focus": "external control benchmark for language-guided spatial reasoning",
+      "benchmark_type": "QA / external comparison",
+      "notes": [
+        "Official Hugging Face dataset id: pangyyyyy/OmniSpatial.",
+        "This dataset is not ERP-native, so it should be reported as an external comparison benchmark rather than part of the ERP-native headline score."
+      ],
+      "sources": [
+        {
+          "type": "dataset",
+          "url": "https://huggingface.co/datasets/pangyyyyy/OmniSpatial"
+        },
+        {
+          "type": "project",
+          "url": "https://qizekun.github.io/omnispatial/"
+        }
+      ],
+      "abilities": [
+        "language-conditioned spatial reasoning",
+        "attribute and geometry comparison",
+        "external control for general spatial intelligence"
+      ],
+      "subtasks": {
+        "spatial_reasoning": {
+          "ability": "general spatial-language reasoning"
+        },
+        "dynamic_reasoning": {
+          "ability": "reason about motion and spatial outcomes"
+        },
+        "complex_logic": {
+          "ability": "multi-step spatial logic over visual scenes"
+        }
+      }
+    },
+    "osr-bench": {
+      "display_name": "OSR-Bench",
+      "availability": "public_dataset",
+      "status": "ready_via_huggingface",
+      "modality": "360 image question answering",
+      "primary_focus": "omnidirectional spatial reasoning and orientation understanding",
+      "benchmark_type": "QA / spatial reasoning",
+      "notes": [
+        "Accessible Hugging Face dataset id: UUUserna/OSR-Bench.",
+        "The public dataset card is minimal, so the subtask mapping below is based on the benchmark paper rather than the card alone."
+      ],
+      "sources": [
+        {
+          "type": "dataset",
+          "url": "https://huggingface.co/datasets/UUUserna/OSR-Bench"
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2507.19221"
+        }
+      ],
+      "abilities": [
+        "egocentric direction understanding",
+        "allocentric/world-frame orientation",
+        "object pose and relative spatial comparison",
+        "wide-field 360 scene reasoning"
+      ],
+      "subtasks": {
+        "basic-direction-sense": {
+          "ability": "coarse egocentric direction recognition such as left/right/front/back"
+        },
+        "direction-differentiation": {
+          "ability": "fine-grained direction discrimination under panoramic FoV"
+        },
+        "direction-sense-in-world": {
+          "ability": "map local observations to a world-frame direction or orientation"
+        },
+        "front-back-comparison": {
+          "ability": "compare objects or regions across opposite panoramic directions"
+        },
+        "object-pose-estimation": {
+          "ability": "infer an object's orientation relative to the viewer"
+        },
+        "object-size-comparison": {
+          "ability": "compare apparent or spatial size under 360 viewing"
+        },
+        "relative-distance": {
+          "ability": "estimate which object is closer or farther"
+        },
+        "relative-height": {
+          "ability": "reason about vertical relations"
+        },
+        "relative-depth": {
+          "ability": "reason about depth order in a 360 scene"
+        },
+        "relative-width": {
+          "ability": "compare width or horizontal extent"
+        }
+      }
+    },
+    "panoenv": {
+      "display_name": "PanoEnv",
+      "availability": "public_dataset",
+      "status": "ready_via_huggingface",
+      "modality": "panoramic indoor environment QA",
+      "primary_focus": "3D spatial relation reasoning and action grounding in panorama-based environments",
+      "benchmark_type": "QA / embodied spatial reasoning",
+      "notes": [
+        "Accessible Hugging Face dataset id: 7zkk/PanoEnv.",
+        "The dataset card exposes five major categories with explicit sub-categories and split statistics."
+      ],
+      "sources": [
+        {
+          "type": "dataset",
+          "url": "https://huggingface.co/datasets/7zkk/PanoEnv"
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2508.16051"
+        }
+      ],
+      "abilities": [
+        "3D spatial relation understanding",
+        "ERP seam and view-composition understanding",
+        "scene semantics",
+        "geometry-grounded panoramic reasoning"
+      ],
+      "subtasks": {
+        "primary_view": {
+          "ability": "identify which perspective view primarily contributes to an ERP region"
+        },
+        "multi_view_visibility": {
+          "ability": "reason about which objects are jointly visible across stitched views"
+        },
+        "seam_attribution": {
+          "ability": "understand seam artifacts and boundary ownership in ERP images"
+        },
+        "depth_similarity": {
+          "ability": "estimate whether objects are at similar depth"
+        },
+        "depth_binary": {
+          "ability": "judge nearer versus farther in binary form"
+        },
+        "depth_compare": {
+          "ability": "compare object distances quantitatively or qualitatively"
+        },
+        "distance_description": {
+          "ability": "describe distance using language grounded in 3D geometry"
+        },
+        "env_binary_judgement": {
+          "ability": "classify or verify environment identity from context"
+        },
+        "env_category_identification": {
+          "ability": "infer scene category from panoramic semantics"
+        },
+        "relpos_cardinal": {
+          "ability": "infer cardinal or relative 3D object positioning"
+        },
+        "relpos_distance_straightline": {
+          "ability": "estimate straight-line spatial distance between objects"
+        },
+        "volume_comparison": {
+          "ability": "compare intrinsic object volume independent of viewpoint"
+        },
+        "shape_flatness": {
+          "ability": "infer 3D shape attributes from 2D ERP projections"
+        }
+      }
+    },
+    "habitat-nav": {
+      "display_name": "Habitat Family Navigation Tasks",
+      "availability": "public_code",
+      "status": "adapter_template_ready",
+      "modality": "panoramic or multi-view embodied navigation",
+      "primary_focus": "executable navigation metrics",
+      "benchmark_type": "embodied navigation",
+      "notes": [
+        "This is a practical umbrella entry for the H* note in your slide.",
+        "It is not ERP-native by default, but it is the most reusable open-source family for navigation-style evaluation.",
+        "Use this adapter to aggregate success-rate style metrics exported by Habitat, VLN, or related simulators."
+      ],
+      "sources": [
+        {
+          "type": "code",
+          "url": "https://github.com/facebookresearch/habitat-lab"
+        },
+        {
+          "type": "code",
+          "url": "https://github.com/google-research-datasets/RxR"
+        }
+      ],
+      "abilities": [
+        "instruction-conditioned navigation",
+        "path planning quality",
+        "navigation execution robustness"
+      ],
+      "subtasks": {
+        "success": {
+          "ability": "reach the target"
+        },
+        "spl": {
+          "ability": "trade off success and path efficiency"
+        },
+        "ndtw": {
+          "ability": "follow the intended route"
+        },
+        "sdtw": {
+          "ability": "follow the route while still succeeding"
+        }
+      }
+    }
+  }
+}

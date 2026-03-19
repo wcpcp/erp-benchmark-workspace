@@ -1,0 +1,40 @@
+{
+  "scene_id": "demo_opening_scene_0001",
+  "erp_image_path": "images/demo_opening_scene_0001.jpg",
+  "erp_width": 1600,
+  "erp_height": 800,
+  "openings": [
+    {
+      "preferred_action": "go_forward"
+    }
+  ],
+  "entities": [
+    {
+      "entity_id": "E000001",
+      "confidence": 0.61,
+      "bbox_erp": [700, 230, 850, 650],
+      "mask_rle": {
+        "size": [800, 1600],
+        "counts": [1, 2, 3]
+      },
+      "lon_lat": [0.1, 0.0],
+      "area_ratio": 0.03,
+      "support_views": 2,
+      "entity_center_depth": 2.1,
+      "entity_xyz_camera": [0.3, 0.0, -2.1],
+      "seam_crossing_flag": false,
+      "pole_proximity_flag": false,
+      "semantic": {
+        "identify": "door",
+        "attributes": {
+          "color": "brown",
+          "material": "wood",
+          "condition": "open"
+        },
+        "caption_brief": "An open brown wooden door.",
+        "reground_query": "the open brown door",
+        "confidence": 0.98
+      }
+    }
+  ]
+}

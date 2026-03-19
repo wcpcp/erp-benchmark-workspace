@@ -1,0 +1,69 @@
+{
+  "release_policy": {
+    "official_test_answers_public": false,
+    "recommended_public_dev_per_task": 50,
+    "official_hidden_test_per_task": 500,
+    "scene_level_holdout_required": true,
+    "manual_verification_required": true
+  },
+  "scoring": {
+    "official_primary_score": "core_v1_macro_average",
+    "report_per_task": true,
+    "report_per_ability_group": true,
+    "report_diagnostic_slices": true,
+    "diagnostic_slices": [
+      "seam",
+      "pole",
+      "rotation",
+      "same_class_distractor",
+      "low_margin_depth"
+    ],
+    "report_advanced_extension_separately": true
+  },
+  "balancing_rules": {
+    "max_items_from_single_scene_per_task": 3,
+    "prefer_unique_scene_target_pairs": true,
+    "difficulty_mix_default": {
+      "easy": 0.4,
+      "medium": 0.4,
+      "hard": 0.2
+    },
+    "scene_category_balance_required": true,
+    "yaw_coverage_balance_required": true,
+    "same_class_distractor_share_min": 0.25
+  },
+  "acceptance_checklist": [
+    "required metadata present",
+    "ground truth verified",
+    "question visually grounded",
+    "answer unique",
+    "no unresolved ambiguity",
+    "no near-duplicate official sample",
+    "scene held out from train and SFT",
+    "task quota and slice balance maintained"
+  ],
+  "benchmark_specific_filters": {
+    "text_only_shortcut_filter": true,
+    "perspective_only_shortcut_filter_for_erp_tasks": true,
+    "drop_if_question_can_be_solved_without_erp_specific_context": true,
+    "drop_if_answer_depends_on_non_visible_world_state": true
+  },
+  "recommended_build_order": [
+    "entity_identify",
+    "attribute_understanding",
+    "referring_grounding",
+    "existence",
+    "counting",
+    "scene_composition",
+    "absolute_direction",
+    "relative_direction",
+    "depth_ordering",
+    "distance_bucket",
+    "seam_continuity",
+    "rotation_consistency",
+    "polar_distortion_awareness",
+    "relative_3d_position",
+    "object_search_initial_turn",
+    "path_search_initial_action"
+  ]
+}

@@ -1,0 +1,280 @@
+{
+  "benchmark_name": "ERP Foundation Benchmark",
+  "benchmark_version": "v1-proposed",
+  "core_v1_hidden_test_size": 6500,
+  "advanced_extension_hidden_test_size": 1500,
+  "tasks": [
+    {
+      "task_id": "entity_identify",
+      "ability_group": "language_erp_alignment",
+      "release_phase": "core_v1",
+      "target_samples": 500,
+      "construction_unit": "anchor_entity",
+      "answer_format": "4_way_multiple_choice",
+      "metadata_tier": "base",
+      "gt_sources": ["entities[].semantic.identify"],
+      "question_goal": "recognize the semantic identity of an ERP-grounded entity",
+      "must_filters": [
+        "high semantic confidence",
+        "object uniquely referable in scene",
+        "distractors from confusable categories"
+      ],
+      "difficulty_mix": {"easy": 200, "medium": 200, "hard": 100}
+    },
+    {
+      "task_id": "attribute_understanding",
+      "ability_group": "language_erp_alignment",
+      "release_phase": "core_v1",
+      "target_samples": 500,
+      "construction_unit": "anchor_entity",
+      "answer_format": "4_way_multiple_choice",
+      "metadata_tier": "base",
+      "gt_sources": ["entities[].semantic.attributes"],
+      "question_goal": "identify color, material, state, or part attributes for an ERP-grounded entity",
+      "must_filters": [
+        "attribute must come from normalized vocabulary",
+        "attribute visually supported by ERP evidence",
+        "at least three plausible distractors"
+      ],
+      "difficulty_mix": {"easy": 180, "medium": 220, "hard": 100}
+    },
+    {
+      "task_id": "referring_grounding",
+      "ability_group": "language_erp_alignment",
+      "release_phase": "core_v1",
+      "target_samples": 500,
+      "construction_unit": "anchor_entity",
+      "answer_format": "4_way_region_selection",
+      "metadata_tier": "base",
+      "gt_sources": ["entities[].bbox_erp", "entities[].mask_rle", "entities[].semantic.reground_query"],
+      "question_goal": "align a referring expression to the correct ERP entity",
+      "must_filters": [
+        "target entity must be unique under the referring phrase",
+        "candidate regions must be comparable in size and salience",
+        "same-class distractors preferred"
+      ],
+      "difficulty_mix": {"easy": 150, "medium": 220, "hard": 130}
+    },
+    {
+      "task_id": "existence",
+      "ability_group": "language_erp_alignment",
+      "release_phase": "core_v1",
+      "target_samples": 500,
+      "construction_unit": "scene_global",
+      "answer_format": "boolean",
+      "metadata_tier": "base",
+      "gt_sources": ["scene entity inventory"],
+      "question_goal": "decide whether a category or attribute-conditioned category appears in the ERP scene",
+      "must_filters": [
+        "negative samples must be scene-realistic",
+        "no synonym ambiguity",
+        "avoid hidden/tiny uncertain instances"
+      ],
+      "difficulty_mix": {"easy": 180, "medium": 200, "hard": 120}
+    },
+    {
+      "task_id": "counting",
+      "ability_group": "language_erp_alignment",
+      "release_phase": "core_v1",
+      "target_samples": 500,
+      "construction_unit": "scene_global",
+      "answer_format": "small_integer_or_5plus_bucket",
+      "metadata_tier": "base",
+      "gt_sources": ["scene entity inventory"],
+      "question_goal": "count category instances in one ERP panorama",
+      "must_filters": [
+        "countable category only",
+        "all counted instances must be verified",
+        "use exact counts only for low ambiguity scenes"
+      ],
+      "difficulty_mix": {"easy": 180, "medium": 200, "hard": 120}
+    },
+    {
+      "task_id": "scene_composition",
+      "ability_group": "language_erp_alignment",
+      "release_phase": "core_v1",
+      "target_samples": 500,
+      "construction_unit": "scene_global",
+      "answer_format": "4_way_multiple_choice",
+      "metadata_tier": "base_or_optional",
+      "gt_sources": ["scene_global_tags", "verified entity summary"],
+      "question_goal": "identify scene type or the best object-layout statement for the whole ERP scene",
+      "must_filters": [
+        "answer must be image-grounded",
+        "avoid questions solvable from language priors alone",
+        "use object arrangement, not only room category keywords"
+      ],
+      "difficulty_mix": {"easy": 150, "medium": 220, "hard": 130}
+    },
+    {
+      "task_id": "absolute_direction",
+      "ability_group": "erp_native_spatial_understanding",
+      "release_phase": "core_v1",
+      "target_samples": 500,
+      "construction_unit": "anchor_entity",
+      "answer_format": "structured_direction_bin",
+      "metadata_tier": "base_plus_derived",
+      "gt_sources": ["entities[].lon_lat", "yaw_bin", "pitch_bin"],
+      "question_goal": "predict where an entity lies in ERP/world angular space",
+      "must_filters": [
+        "entity center direction stable",
+        "avoid seam-adjacent ambiguity unless intentionally in seam slice",
+        "direction bins balanced across yaw and pitch"
+      ],
+      "difficulty_mix": {"easy": 150, "medium": 220, "hard": 130}
+    },
+    {
+      "task_id": "relative_direction",
+      "ability_group": "erp_native_spatial_understanding",
+      "release_phase": "core_v1",
+      "target_samples": 500,
+      "construction_unit": "entity_pair",
+      "answer_format": "relation_label",
+      "metadata_tier": "base_plus_derived",
+      "gt_sources": ["pairwise.angular_delta", "entities[].lon_lat"],
+      "question_goal": "predict A relative to B in ERP angular space",
+      "must_filters": [
+        "clear angular margin",
+        "pair should not be nearly collinear across multiple labels",
+        "same-scene pairs balanced across left/right/front/back"
+      ],
+      "difficulty_mix": {"easy": 170, "medium": 200, "hard": 130}
+    },
+    {
+      "task_id": "seam_continuity",
+      "ability_group": "erp_native_spatial_understanding",
+      "release_phase": "core_v1",
+      "target_samples": 500,
+      "construction_unit": "scene_or_pair",
+      "answer_format": "boolean_or_same_instance_choice",
+      "metadata_tier": "optional",
+      "gt_sources": ["entities[].seam_crossing_flag", "mask topology", "cross-view merge evidence"],
+      "question_goal": "reason correctly about ERP left-right wrap-around continuity",
+      "must_filters": [
+        "must involve true seam-adjacent evidence",
+        "manual verification required",
+        "mix same-instance and different-instance cases"
+      ],
+      "difficulty_mix": {"easy": 120, "medium": 220, "hard": 160}
+    },
+    {
+      "task_id": "rotation_consistency",
+      "ability_group": "erp_native_spatial_understanding",
+      "release_phase": "core_v1",
+      "target_samples": 500,
+      "construction_unit": "scene_rotation",
+      "answer_format": "transformed_direction_choice",
+      "metadata_tier": "base_plus_derived",
+      "gt_sources": ["synthetic ERP yaw rotation", "entities[].lon_lat"],
+      "question_goal": "check whether answers transform correctly after ERP yaw rotation",
+      "must_filters": [
+        "rotated counterpart generated from the same ERP scene",
+        "question must require transformation, not semantic invariance only",
+        "manual spot-check on transformations"
+      ],
+      "difficulty_mix": {"easy": 120, "medium": 220, "hard": 160}
+    },
+    {
+      "task_id": "polar_distortion_awareness",
+      "ability_group": "erp_native_spatial_understanding",
+      "release_phase": "core_v1",
+      "target_samples": 500,
+      "construction_unit": "anchor_entity",
+      "answer_format": "binary_or_4_way_statement_choice",
+      "metadata_tier": "optional",
+      "gt_sources": ["entities[].pole_proximity_flag", "mask shape", "attribute-backed true shape cues"],
+      "question_goal": "distinguish ERP projection distortion from real shape properties",
+      "must_filters": [
+        "must be near pole or high-latitude region",
+        "answer must be manually verified",
+        "avoid cases where real shape is itself highly elongated and ambiguous"
+      ],
+      "difficulty_mix": {"easy": 100, "medium": 220, "hard": 180}
+    },
+    {
+      "task_id": "depth_ordering",
+      "ability_group": "spatial_3d_and_search_preconditions",
+      "release_phase": "core_v1",
+      "target_samples": 500,
+      "construction_unit": "entity_pair",
+      "answer_format": "ordinal_relation",
+      "metadata_tier": "optional",
+      "gt_sources": ["entities[].entity_center_depth", "pairwise.depth_delta"],
+      "question_goal": "predict which entity is closer or farther",
+      "must_filters": [
+        "stable depth source required",
+        "minimum depth margin threshold",
+        "manual review on borderline pairs"
+      ],
+      "difficulty_mix": {"easy": 180, "medium": 200, "hard": 120}
+    },
+    {
+      "task_id": "distance_bucket",
+      "ability_group": "spatial_3d_and_search_preconditions",
+      "release_phase": "core_v1",
+      "target_samples": 500,
+      "construction_unit": "anchor_entity",
+      "answer_format": "near_medium_far",
+      "metadata_tier": "optional",
+      "gt_sources": ["entities[].entity_center_depth"],
+      "question_goal": "estimate coarse distance bucket from ERP and depth evidence",
+      "must_filters": [
+        "bucket thresholds fixed globally",
+        "exclude threshold-near entities unless intentionally hard",
+        "coverage over near, medium, and far buckets"
+      ],
+      "difficulty_mix": {"easy": 170, "medium": 210, "hard": 120}
+    },
+    {
+      "task_id": "relative_3d_position",
+      "ability_group": "spatial_3d_and_search_preconditions",
+      "release_phase": "advanced_extension",
+      "target_samples": 500,
+      "construction_unit": "entity_pair",
+      "answer_format": "coarse_3d_relation_label",
+      "metadata_tier": "advanced",
+      "gt_sources": ["entities[].entity_xyz_camera"],
+      "question_goal": "predict coarse 3D relation such as above/below/in-front-of/behind",
+      "must_filters": [
+        "xyz anchor must be trusted",
+        "clear relation margin",
+        "avoid unsupported metric-size assumptions"
+      ],
+      "difficulty_mix": {"easy": 140, "medium": 220, "hard": 140}
+    },
+    {
+      "task_id": "object_search_initial_turn",
+      "ability_group": "spatial_3d_and_search_preconditions",
+      "release_phase": "advanced_extension",
+      "target_samples": 500,
+      "construction_unit": "scene_global_or_anchor",
+      "answer_format": "discrete_turn_action",
+      "metadata_tier": "base_plus_derived",
+      "gt_sources": ["target entity direction", "observer heading convention"],
+      "question_goal": "choose the first turn action that best orients the agent toward a target object in ERP space",
+      "must_filters": [
+        "target object must exist and be unambiguous",
+        "current heading convention must be explicit",
+        "answer space limited to a small discrete action set"
+      ],
+      "difficulty_mix": {"easy": 160, "medium": 210, "hard": 130}
+    },
+    {
+      "task_id": "path_search_initial_action",
+      "ability_group": "spatial_3d_and_search_preconditions",
+      "release_phase": "advanced_extension",
+      "target_samples": 500,
+      "construction_unit": "scene_global",
+      "answer_format": "discrete_navigation_action",
+      "metadata_tier": "advanced",
+      "gt_sources": ["free_space proxy", "openings", "depth geometry"],
+      "question_goal": "choose the first plausible navigation action toward a goal or navigable opening",
+      "must_filters": [
+        "requires trusted free-space or opening metadata",
+        "must avoid hidden non-visible route assumptions",
+        "manual verification mandatory"
+      ],
+      "difficulty_mix": {"easy": 140, "medium": 220, "hard": 140}
+    }
+  ]
+}

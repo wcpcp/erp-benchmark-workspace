@@ -1,0 +1,37 @@
+{
+  "id": "erpfb_v1_absolute_direction_000001",
+  "scene_id": "scene_0123",
+  "image_path": "erp_images/scene_0123.jpg",
+  "ability_group": "erp_native_spatial_understanding",
+  "task_id": "absolute_direction",
+  "release_phase": "core_v1",
+  "difficulty": "medium",
+  "question": "At what approximate direction in the ERP panorama is the dark brown wooden door?",
+  "answer_format": "structured_direction_bin",
+  "answer": {
+    "yaw_bin": "front_left",
+    "pitch_bin": "eye_level"
+  },
+  "options": null,
+  "target_entities": [
+    {
+      "entity_id": "E000002",
+      "role": "target"
+    }
+  ],
+  "erp_slices": [
+    "wide_fov"
+  ],
+  "source_metadata": {
+    "gt_sources": [
+      "entities[].lon_lat",
+      "yaw_bin",
+      "pitch_bin"
+    ]
+  },
+  "verification": {
+    "rule_verified": true,
+    "manual_verified": true,
+    "verifier_count": 2
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "entity_identify": [
+    "Which option best identifies {entity_ref} in this ERP panorama?",
+    "What is the object referred to as {entity_ref}?",
+    "The region described as {entity_ref} is which object?"
+  ],
+  "attribute_understanding": [
+    "What is the {attribute_name} of {entity_ref}?",
+    "Which option best describes the {attribute_name} of {entity_ref}?",
+    "For {entity_ref}, what is the correct {attribute_name}?"
+  ],
+  "referring_grounding": [
+    "Which candidate region matches the phrase: {entity_ref}?",
+    "Select the correct region for: {entity_ref}.",
+    "Which option grounds the referring expression {entity_ref}?"
+  ],
+  "existence": [
+    "Does this ERP panorama contain any {category_name}?",
+    "Is there a {category_name} visible in the scene?",
+    "Can a {category_name} be found anywhere in this ERP image?"
+  ],
+  "counting": [
+    "How many {category_name} are visible in this ERP panorama?",
+    "Count the number of {category_name} in the full panorama.",
+    "What is the correct count of {category_name} in the scene?"
+  ],
+  "scene_composition": [
+    "Which statement best describes the scene composition of this ERP panorama?",
+    "Choose the most accurate summary of the overall scene layout.",
+    "Which option best matches the object arrangement in this scene?"
+  ],
+  "absolute_direction": [
+    "At what approximate direction is {entity_ref} located in the ERP panorama?",
+    "Which direction bin best matches the location of {entity_ref}?",
+    "Where is {entity_ref} in the full 360 panorama?"
+  ],
+  "relative_direction": [
+    "Relative to {entity_b}, where is {entity_a} in ERP angular space?",
+    "Which relation best describes the direction of {entity_a} relative to {entity_b}?",
+    "In the panorama, where is {entity_a} with respect to {entity_b}?"
+  ],
+  "seam_continuity": [
+    "Does {entity_ref} continue across the left-right ERP seam?",
+    "Is the seam-separated appearance of {entity_ref} still one continuous object?",
+    "Across the ERP boundary, does {entity_ref} remain the same instance?"
+  ],
+  "rotation_consistency": [
+    "If the ERP panorama is rotated {rotation_deg} degrees to the right, where would {entity_ref} appear?",
+    "After a {rotation_deg}-degree yaw rotation of the ERP image, what is the new direction of {entity_ref}?",
+    "How should the direction of {entity_ref} change after rotating the panorama by {rotation_deg} degrees?"
+  ],
+  "polar_distortion_awareness": [
+    "Is the stretched appearance of {entity_ref} mainly caused by ERP projection distortion?",
+    "Does {entity_ref} look elongated because it is near the ERP pole?",
+    "Is the apparent deformation of {entity_ref} a projection artifact?"
+  ],
+  "depth_ordering": [
+    "Which is closer to the observer, {entity_a} or {entity_b}?",
+    "Between {entity_a} and {entity_b}, which one is farther away?",
+    "Compare the depth ordering of {entity_a} and {entity_b}."
+  ],
+  "distance_bucket": [
+    "How far is {entity_ref} from the observer?",
+    "Which distance bucket best describes {entity_ref}?",
+    "Is {entity_ref} near, medium, or far?"
+  ],
+  "relative_3d_position": [
+    "What is the coarse 3D relation of {entity_a} relative to {entity_b}?",
+    "Is {entity_a} above, below, in front of, or behind {entity_b}?",
+    "Which option best describes the 3D relation between {entity_a} and {entity_b}?"
+  ],
+  "object_search_initial_turn": [
+    "To search for {entity_ref}, what is the best first turning action from the current heading?",
+    "Which initial turn best orients the observer toward {entity_ref}?",
+    "If the goal is {entity_ref}, what should the observer do first?"
+  ],
+  "path_search_initial_action": [
+    "Which initial navigation action is most plausible in this scene?",
+    "Given the visible geometry, what is the best first movement choice?",
+    "Which action best matches the immediately navigable direction?"
+  ]
+}

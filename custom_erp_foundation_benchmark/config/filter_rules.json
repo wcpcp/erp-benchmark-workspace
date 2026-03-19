@@ -1,0 +1,30 @@
+{
+  "entity": {
+    "min_confidence": 0.35,
+    "min_semantic_confidence": 0.7,
+    "min_area_ratio": 0.001,
+    "max_area_ratio": 0.35
+  },
+  "pair": {
+    "min_direction_margin_deg": 20.0,
+    "min_depth_margin": 0.75
+  },
+  "benchmark_pool": {
+    "max_items_per_scene_per_task": 3,
+    "prefer_manual_verification_for_optional_and_advanced_tasks": true
+  },
+  "distance_buckets": {
+    "near_max": 2.5,
+    "medium_max": 6.0
+  },
+  "direction_bins": [
+    "front",
+    "front_right",
+    "right",
+    "back_right",
+    "back",
+    "back_left",
+    "left",
+    "front_left"
+  ]
+}
