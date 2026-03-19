@@ -78,6 +78,12 @@ uv run --project benchmark python benchmark/scripts/prepare_benchmarks.py \
 uv run --project benchmark python benchmark/scripts/create_smoke_subsets.py
 ```
 
+注意：
+
+- 这个脚本现在默认是离线优先的
+- 对 `OmniSpatial`，它只会复用本地已有的 `smoke/test manifest` 或本地 `parquet`
+- 如果本地还没有 `OmniSpatial` 原始数据，它会跳过并提示原因，不会自动联网下载
+
 会生成：
 
 - `benchmark/data/osr-bench/manifests/smoke_20.jsonl`

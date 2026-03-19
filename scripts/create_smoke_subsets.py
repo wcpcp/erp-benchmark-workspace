@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 
@@ -37,55 +36,83 @@ def make_prediction_template(rows: list[dict]) -> list[dict]:
 
 
 def build_omnispatial_smoke() -> dict:
-    from datasets import load_dataset
-    from huggingface_hub import hf_hub_download
-
     raw_root = DATA / "omnispatial" / "raw"
     manifest_path = DATA / "omnispatial" / "manifests" / "smoke_20.jsonl"
     template_path = TEMPLATES / "predictions_omnispatial_smoke_template.jsonl"
 
-    rows = []
-    dataset = load_dataset("pangyyyyy/OmniSpatial", split="test[:20]")
-    for row_index, row in enumerate(dataset):
-        rel_image_path = str(row["image_path"])
-        local_image = raw_root / rel_image_path
-        local_image.parent.mkdir(parents=True, exist_ok=True)
-        if not local_image.exists():
-            downloaded = hf_hub_download(
-                repo_id="pangyyyyy/OmniSpatial",
-                repo_type="dataset",
-                filename=rel_image_path,
-            )
-            shutil.copy2(downloaded, local_image)
-        options = list(row["options"])
-        answer_index = int(row["answer"])
-        answer_letter = str(row.get("gt", "")).strip().upper()
-        answer_text = options[answer_index] if 0 <= answer_index < len(options) else answer_letter
-        raw_id = str(row["id"])
-        rows.append(
-            {
-                "id": f"{row_index}::{raw_id}",
-                "raw_id": raw_id,
-                "row_index": row_index,
-                "image_path": str(local_image),
-                "question": row["question"],
-                "prompt": row["question"],
-                "options": options,
-                "answer": answer_text,
-                "answer_index": answer_index,
-                "answer_letter": answer_letter,
-                "task_type": row.get("task_type"),
-                "sub_task_type": row.get("sub_task_type"),
-            }
-        )
+    if manifest_path.exists():
+        rows = load_jsonl(manifest_path)
+        save_jsonl(template_path, make_prediction_template(rows))
+        return {
+            "status": "ok",
+            "num_rows": len(rows),
+            "smoke_manifest": str(manifest_path),
+            "template": str(template_path),
+            "source": "existing_smoke_manifest",
+        }
 
-    save_jsonl(manifest_path, rows)
-    save_jsonl(template_path, make_prediction_template(rows))
+    full_manifest = DATA / "omnispatial" / "manifests" / "test.jsonl"
+    if full_manifest.exists():
+        rows = load_jsonl(full_manifest)[:20]
+        save_jsonl(manifest_path, rows)
+        save_jsonl(template_path, make_prediction_template(rows))
+        return {
+            "status": "ok",
+            "num_rows": len(rows),
+            "smoke_manifest": str(manifest_path),
+            "template": str(template_path),
+            "source": "local_test_manifest",
+        }
+
+    parquet_path = raw_root / "test-00000-of-00001.parquet"
+    if parquet_path.exists():
+        from datasets import load_dataset
+
+        rows = []
+        dataset = load_dataset("parquet", data_files=str(parquet_path), split="train[:20]")
+        for row_index, row in enumerate(dataset):
+            rel_image_path = str(row["image_path"])
+            local_image = raw_root / rel_image_path
+            options = list(row["options"])
+            answer_index = int(row["answer"])
+            answer_letter = str(row.get("gt", "")).strip().upper()
+            answer_text = options[answer_index] if 0 <= answer_index < len(options) else answer_letter
+            raw_id = str(row["id"])
+            rows.append(
+                {
+                    "id": f"{row_index}::{raw_id}",
+                    "raw_id": raw_id,
+                    "row_index": row_index,
+                    "image_path": str(local_image),
+                    "question": row["question"],
+                    "prompt": row["question"],
+                    "options": options,
+                    "answer": answer_text,
+                    "answer_index": answer_index,
+                    "answer_letter": answer_letter,
+                    "task_type": row.get("task_type"),
+                    "sub_task_type": row.get("sub_task_type"),
+                }
+            )
+
+        save_jsonl(manifest_path, rows)
+        save_jsonl(template_path, make_prediction_template(rows))
+        return {
+            "status": "ok",
+            "num_rows": len(rows),
+            "smoke_manifest": str(manifest_path),
+            "template": str(template_path),
+            "source": "local_parquet",
+        }
+
     return {
-        "status": "ok",
-        "num_rows": len(rows),
-        "smoke_manifest": str(manifest_path),
-        "template": str(template_path),
+        "status": "skipped",
+        "reason": (
+            "OmniSpatial local data not found. Expected one of: "
+            "data/omnispatial/manifests/smoke_20.jsonl, "
+            "data/omnispatial/manifests/test.jsonl, or "
+            "data/omnispatial/raw/test-00000-of-00001.parquet."
+        ),
     }
 
 
