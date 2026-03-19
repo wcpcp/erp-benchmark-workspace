@@ -31,6 +31,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip direct dataset download for 360Loc and only prepare directory scaffolding.",
     )
+    parser.add_argument(
+        "--raw-dir",
+        action="append",
+        default=[],
+        metavar="BENCHMARK_ID=/abs/path/to/raw",
+        help=(
+            "Reuse an existing raw-data directory for a benchmark. "
+            "The script will symlink it into <data-root>/<benchmark>/raw before preparing manifests. "
+            "Can be passed multiple times."
+        ),
+    )
     return parser
 
 
@@ -46,6 +57,49 @@ def resolve_benchmarks(raw: str) -> list[str]:
             deduped.append(item)
             seen.add(item)
     return deduped
+
+
+def parse_raw_dir_overrides(items: list[str]) -> dict[str, Path]:
+    overrides: dict[str, Path] = {}
+    for item in items:
+        if "=" not in item:
+            raise ValueError(
+                f"Invalid --raw-dir value: {item!r}. Expected BENCHMARK_ID=/abs/path/to/raw."
+            )
+        benchmark_id, raw_path = item.split("=", 1)
+        benchmark_id = benchmark_id.strip()
+        raw_path = raw_path.strip()
+        if not benchmark_id or not raw_path:
+            raise ValueError(
+                f"Invalid --raw-dir value: {item!r}. Expected BENCHMARK_ID=/abs/path/to/raw."
+            )
+        overrides[benchmark_id] = Path(raw_path).expanduser().resolve()
+    return overrides
+
+
+def attach_existing_raw_dir(data_root: Path, benchmark_id: str, source_raw_dir: Path) -> None:
+    if not source_raw_dir.exists():
+        raise FileNotFoundError(
+            f"--raw-dir for {benchmark_id} points to a missing directory: {source_raw_dir}"
+        )
+    if not source_raw_dir.is_dir():
+        raise NotADirectoryError(
+            f"--raw-dir for {benchmark_id} must be a directory: {source_raw_dir}"
+        )
+
+    target_raw_dir = data_root / benchmark_id / "raw"
+    target_raw_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    if target_raw_dir.exists() or target_raw_dir.is_symlink():
+        if target_raw_dir.resolve() == source_raw_dir.resolve():
+            print(f"[reuse] {benchmark_id} raw -> {source_raw_dir}")
+            return
+        raise RuntimeError(
+            f"Target raw directory already exists and points elsewhere: {target_raw_dir}"
+        )
+
+    target_raw_dir.symlink_to(source_raw_dir, target_is_directory=True)
+    print(f"[link] {benchmark_id} raw -> {source_raw_dir}")
 
 
 def download_360loc(data_root: Path) -> None:
@@ -95,10 +149,13 @@ def main() -> int:
     args = build_parser().parse_args()
     data_root = Path(args.data_root).resolve()
     data_root.mkdir(parents=True, exist_ok=True)
+    raw_dir_overrides = parse_raw_dir_overrides(args.raw_dir)
 
     for benchmark_id in resolve_benchmarks(args.benchmarks):
         adapter = BENCHMARK_DATASETS[benchmark_id]
         print(f"==> {benchmark_id}")
+        if benchmark_id in raw_dir_overrides:
+            attach_existing_raw_dir(data_root, benchmark_id, raw_dir_overrides[benchmark_id])
         adapter.ensure_data(data_root)
         if benchmark_id == "360loc" and not args.skip_360loc_download:
             download_360loc(data_root)

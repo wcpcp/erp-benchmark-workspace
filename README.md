@@ -34,6 +34,26 @@ uv run --project benchmark python benchmark/scripts/prepare_benchmarks.py \
   --benchmarks osr-bench,panoenv,omnispatial,hstar-bench-erp
 ```
 
+这条命令默认假设原始数据和生成的 manifest 都放在：
+
+- `benchmark/data/<benchmark>/raw`
+- `benchmark/data/<benchmark>/manifests`
+
+如果你服务器上已经从 Hugging Face 下载好了原始数据，但放在别的位置，可以直接把现有目录告诉脚本，它会先把那个目录软链接到标准位置，再生成 manifest：
+
+```bash
+uv run --project benchmark python benchmark/scripts/prepare_benchmarks.py \
+  --benchmarks osr-bench,panoenv,omnispatial,hstar-bench-erp \
+  --raw-dir osr-bench=/abs/path/to/OSR-Bench/raw \
+  --raw-dir panoenv=/abs/path/to/PanoEnv/raw \
+  --raw-dir omnispatial=/abs/path/to/OmniSpatial/raw \
+  --raw-dir hstar-bench-erp=/abs/path/to/hstar_bench/raw
+```
+
+`--raw-dir` 的格式必须是：
+
+- `benchmark_id=/absolute/path/to/raw_dir`
+
 如果你要确保 `hstar-bench-erp` 的协议 manifest 也生成好，再跑：
 
 ```bash
