@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -19,5 +20,17 @@ def bootstrap_local_src(script_path: str) -> tuple[Path, Path]:
     for name in list(sys.modules):
         if name == "erp_benchmarks" or name.startswith("erp_benchmarks."):
             sys.modules.pop(name, None)
+
+    spec = importlib.util.spec_from_file_location(
+        "erp_benchmarks",
+        package_init,
+        submodule_search_locations=[str(src / "erp_benchmarks")],
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Failed to create import spec for local package: {package_init}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["erp_benchmarks"] = module
+    spec.loader.exec_module(module)
 
     return root, src
