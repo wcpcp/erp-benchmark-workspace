@@ -4,9 +4,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-from datasets import load_dataset
-from huggingface_hub import snapshot_download
-
 from .base import DatasetAdapter
 from ..utils.io import dump_json, load_records
 
@@ -17,6 +14,8 @@ class OmniSpatialDataset(DatasetAdapter):
     repo_id = "pangyyyyy/OmniSpatial"
 
     def ensure_data(self, data_root: Path) -> None:
+        from huggingface_hub import snapshot_download
+
         target = data_root / self.benchmark_id / "raw"
         target.mkdir(parents=True, exist_ok=True)
         marker = target / "test-00000-of-00001.parquet"
@@ -31,6 +30,8 @@ class OmniSpatialDataset(DatasetAdapter):
         )
 
     def build_manifest(self, data_root: Path, split: str = "test") -> Path:
+        from datasets import load_dataset
+
         del split
         raw_dir = data_root / self.benchmark_id / "raw"
         manifest_path = data_root / self.benchmark_id / "manifests" / "test.jsonl"

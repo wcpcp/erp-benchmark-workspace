@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 
-from pathlib import Path
-import sys
+from _bootstrap import bootstrap_local_src
 
-ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+ROOT, SRC = bootstrap_local_src(__file__)
 
 from erp_benchmarks.cli import main
 

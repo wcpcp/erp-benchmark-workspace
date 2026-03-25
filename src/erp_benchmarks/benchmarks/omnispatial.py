@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from datasets import load_dataset
-
 from .base import BenchmarkAdapter
 from ..utils.io import dump_json, load_records
 
 
 def _load_hf_records(split: str, cache_dir: str | None) -> list[dict[str, Any]]:
+    from datasets import load_dataset
+
     dataset = load_dataset("pangyyyyy/OmniSpatial", split=split, cache_dir=cache_dir)
     records = []
     for row_index, row in enumerate(dataset):

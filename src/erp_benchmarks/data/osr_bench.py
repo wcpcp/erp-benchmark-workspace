@@ -4,8 +4,6 @@ import csv
 from pathlib import Path
 from typing import Any
 
-from huggingface_hub import snapshot_download
-
 from .base import DatasetAdapter
 from ..utils.io import dump_json, load_records
 from ..utils.metrics import exact_match_report
@@ -17,6 +15,8 @@ class OsrBenchDataset(DatasetAdapter):
     repo_id = "UUUserna/OSR-Bench"
 
     def ensure_data(self, data_root: Path) -> None:
+        from huggingface_hub import snapshot_download
+
         target = data_root / self.benchmark_id / "raw"
         target.mkdir(parents=True, exist_ok=True)
         marker = target / "qa.csv"

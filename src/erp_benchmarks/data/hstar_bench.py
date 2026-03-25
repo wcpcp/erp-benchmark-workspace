@@ -4,8 +4,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-from huggingface_hub import snapshot_download
-
 from .base import DatasetAdapter
 from ..utils.hstar_protocol import build_hstar_protocol_records, extract_hstar_archives
 from ..utils.io import dump_json
@@ -33,6 +31,8 @@ class HstarBenchDataset(DatasetAdapter):
     repo_id = "humanoid-vstar/hstar_bench"
 
     def ensure_data(self, data_root: Path) -> None:
+        from huggingface_hub import snapshot_download
+
         target = data_root / self.benchmark_id / "raw"
         target.mkdir(parents=True, exist_ok=True)
         marker = target / "hos_bench.zip"
@@ -101,6 +101,8 @@ class HstarBenchErpDataset(HstarBenchDataset):
     supported_model_generation = True
 
     def ensure_data(self, data_root: Path) -> None:
+        from huggingface_hub import snapshot_download
+
         target = data_root / self.benchmark_id / "raw"
         target.mkdir(parents=True, exist_ok=True)
         marker = target / "hos_bench.zip"
