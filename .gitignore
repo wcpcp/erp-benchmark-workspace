@@ -20,7 +20,7 @@ results/
 reports/
 
 # Downloaded model weights
-models/
+/models/
 
 # Vendored third-party repos
 _third_party/
