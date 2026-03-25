@@ -54,14 +54,14 @@ class HstarBenchErpBenchmark(BenchmarkAdapter):
 
             target_yaw = list(row["target_yaw"])
             target_pitch = list(row["target_pitch"])
-            if parsed.name != "submit":
+            if parsed.name == "rotate":
                 if len(errors) < 10:
                     errors.append(
                         {
                             "id": sample_id,
                             "prediction": raw_prediction,
                             "answer": gold,
-                            "reason": "submit_required",
+                            "reason": "rotate_not_allowed",
                         }
                     )
                 continue

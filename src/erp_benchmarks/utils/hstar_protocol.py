@@ -11,13 +11,18 @@ from PIL import Image
 
 
 ACTION_RE = re.compile(r"(rotate|submit)\s*\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)", re.IGNORECASE)
+ANGLE_RE = re.compile(
+    r"(?:yaw\s*[:=]\s*)?(-?\d+(?:\.\d+)?)\s*[,，]\s*(?:pitch\s*[:=]\s*)?(-?\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+PAREN_ANGLE_RE = re.compile(r"\(\s*(-?\d+(?:\.\d+)?)\s*[,，]\s*(-?\d+(?:\.\d+)?)\s*\)")
 
 
 @dataclass
 class ParsedAction:
     name: str
-    yaw: int
-    pitch: int
+    yaw: float
+    pitch: float
 
 
 def normalize_yaw(angle: float) -> float:
@@ -72,23 +77,31 @@ def pitch_distance_to_range(pitch: float, target_range: list[float]) -> float:
     return min(abs(pitch - low), abs(pitch - high))
 
 
-def canonical_submit(target_yaw: list[float], target_pitch: list[float]) -> str:
+def canonical_direction(target_yaw: list[float], target_pitch: list[float]) -> str:
     yaw = int(round(yaw_interval_center(target_yaw)))
     pitch = int(round((float(target_pitch[0]) + float(target_pitch[1])) / 2.0))
-    return f"submit({yaw},{pitch})"
+    return f"({yaw},{pitch})"
 
 
 def parse_action(text: Any) -> ParsedAction | None:
     if text is None:
         return None
-    match = ACTION_RE.search(str(text))
-    if not match:
-        return None
-    return ParsedAction(
-        name=match.group(1).lower(),
-        yaw=int(match.group(2)),
-        pitch=int(match.group(3)),
-    )
+    raw = str(text)
+    match = ACTION_RE.search(raw)
+    if match:
+        return ParsedAction(
+            name=match.group(1).lower(),
+            yaw=float(match.group(2)),
+            pitch=float(match.group(3)),
+        )
+    match = PAREN_ANGLE_RE.search(raw) or ANGLE_RE.search(raw)
+    if match:
+        return ParsedAction(
+            name="angle",
+            yaw=float(match.group(1)),
+            pitch=float(match.group(2)),
+        )
+    return None
 
 
 def rotate_relative_yaw(angle: float, start_yaw: float) -> float:
@@ -215,7 +228,7 @@ def build_hstar_protocol_records(extract_root: Path) -> dict[str, list[dict[str,
                     "resolution": [1920, 1080],
                 },
                 "success_rule": "submit inside target yaw/pitch range",
-                "preferred_submit": canonical_submit(episode["target_yaw"], episode["target_pitch"]),
+                "preferred_submit": canonical_direction(episode["target_yaw"], episode["target_pitch"]),
             }
         )
         source_path = Path(str(episode["image_path"]))
@@ -242,15 +255,14 @@ def build_hstar_protocol_records(extract_root: Path) -> dict[str, list[dict[str,
                 "target_yaw_original": list(episode["target_yaw"]),
                 "target_yaw": rotated_target_yaw,
                 "question": (
-                    f"You are given one full ERP panorama whose forward direction has been re-centered to the current initial yaw. "
-                    f"Human instruction: {episode['instruction']} Output the final target direction in this ERP image's coordinate "
-                    "system as submit(yaw,pitch)."
+                    f"{episode['instruction']} "
+                    "In this ERP panorama, return only the target direction angles in the current panorama coordinates as (yaw,pitch)."
                 ),
                 "prompt": (
-                    f"Rotated ERP panorama input. Task: {episode['instruction']}. "
-                    "Return the final target direction in the current ERP image coordinates as submit(yaw,pitch)."
+                    f"{episode['instruction']} "
+                    "Return only the target direction angles in the current ERP panorama coordinates as (yaw,pitch)."
                 ),
-                "answer": canonical_submit(rotated_target_yaw, episode["target_pitch"]),
+                "answer": canonical_direction(rotated_target_yaw, episode["target_pitch"]),
                 "success_rule": "submitted yaw/pitch falls inside the rotated target window",
             }
         )

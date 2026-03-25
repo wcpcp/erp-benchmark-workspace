@@ -4,8 +4,8 @@
 
 - `osr-bench`
 - `panoenv`
-- `omnispatial`
 - `hstar-bench-erp`
+- `omnispatial`
 
 使用顺序固定是：
 
@@ -426,6 +426,14 @@ uv run --project benchmark python benchmark/scripts/run_benchmark.py evaluate \
   --references benchmark/data/hstar-bench-erp/manifests/smoke_rotated_submit_20.jsonl \
   --predictions benchmark/templates/predictions_hstar_erp_rotated_submit_smoke_template.jsonl
 ```
+
+`hstar-bench-erp` 当前推荐输出格式是：
+
+```text
+(yaw,pitch)
+```
+
+评测器仍然兼容旧的 `submit(yaw,pitch)`，但新协议默认使用纯角度格式。
 
 ## 最小跑通流程
 

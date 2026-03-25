@@ -13,7 +13,7 @@
   - each sampled initial yaw rotates the ERP input itself
   - the question text stays the same
   - the gold target yaw is rotated into the current ERP image coordinate system
-  - the model only outputs `submit(yaw,pitch)`
+  - the model only outputs the final angles as `(yaw,pitch)`
 
 ## Main idea
 
@@ -59,10 +59,10 @@ it also generates:
 
 ## Evaluation
 
-The ERP-native protocol only accepts final answers:
+The ERP-native protocol only accepts final answers as angles:
 
 ```bash
-submit(yaw,pitch)
+(yaw,pitch)
 ```
 
 Evaluation checks whether the submitted yaw/pitch falls inside the rotated
