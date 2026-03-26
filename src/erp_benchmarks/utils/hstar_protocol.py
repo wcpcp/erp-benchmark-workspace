@@ -137,6 +137,19 @@ def _normalize_pitch_range(item: dict[str, Any]) -> list[float]:
     return [-90.0, 90.0]
 
 
+def _normalize_level(value: Any) -> int:
+    if isinstance(value, list):
+        if not value:
+            return 0
+        value = value[0]
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _build_direct_question(task: str) -> str:
     task = str(task).strip()
     if task and task[-1] not in ".!?":
@@ -179,7 +192,7 @@ def iter_official_hstar_entries(extract_root: Path) -> list[dict[str, Any]]:
                     "target_pitch": target_pitch,
                     "target_center_yaw": yaw_interval_center(target_yaw),
                     "target_center_pitch": (target_pitch[0] + target_pitch[1]) / 2.0,
-                    "level": int(item.get("level", 0)),
+                    "level": _normalize_level(item.get("level", 0)),
                     "question": question,
                     "prompt": question,
                     "answer": canonical_direction(target_yaw, target_pitch),
