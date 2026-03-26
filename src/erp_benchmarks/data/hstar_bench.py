@@ -71,8 +71,9 @@ class HstarBenchDataset(DatasetAdapter):
             "benchmark": self.benchmark_id,
             "note": (
                 "Official H* benchmark data is distributed as hos_bench.zip and "
-                "hps_bench.zip. The unified workspace now tracks both the original "
-                "perspective multi-turn protocol and rotated-ERP submit manifests."
+                "hps_bench.zip. The unified workspace aggregates the official HOS/HPS "
+                "benchmark entries into a direct ERP target-direction manifest without "
+                "adding rotation-expanded copies."
             ),
             "archives": archives if used_archives else [],
             "extracted_dirs": {name: str(path) for name, path in extracted.items()},
@@ -130,11 +131,14 @@ class HstarBenchErpDataset(HstarBenchDataset):
             with path.open("w", encoding="utf-8") as handle:
                 for row in rows:
                     handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+        direct_manifest = manifests_root / "erp_direct_submit.jsonl"
+        test_manifest = manifests_root / "test.jsonl"
+        if direct_manifest.exists():
+            test_manifest.write_text(direct_manifest.read_text(encoding="utf-8"), encoding="utf-8")
 
         split_to_manifest = {
-            "test": manifests_root / "erp_rotated_submit.jsonl",
-            "erp_rotated_submit": manifests_root / "erp_rotated_submit.jsonl",
-            "perspective_multiturn": manifests_root / "perspective_multiturn.jsonl",
+            "test": manifests_root / "test.jsonl",
+            "erp_direct_submit": manifests_root / "erp_direct_submit.jsonl",
         }
         manifest_path = split_to_manifest.get(split_key, manifests_root / f"{split_key}.jsonl")
         if not manifest_path.exists():

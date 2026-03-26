@@ -61,12 +61,13 @@ uv run --project benchmark python benchmark/scripts/prepare_benchmarks.py \
 - 含有 `hos_bench.zip` / `hps_bench.zip` 的原始目录
 - 也可以直接指向已经解压好的 H*Bench 目录树
 
-对于 `hstar-bench-erp`，`prepare_benchmarks.py` 已经会直接生成协议 manifest，不需要再单独跑别的准备脚本。
+对于 `hstar-bench-erp`，`prepare_benchmarks.py` 会直接把官方 `hos_bench`
+和 `hps_bench` 的样本汇总成 direct-submit manifest，不做旋转扩增。
 
 会生成：
 
-- `benchmark/data/hstar-bench-erp/manifests/erp_rotated_submit.jsonl`
-- `benchmark/data/hstar-bench-erp/manifests/perspective_multiturn.jsonl`
+- `benchmark/data/hstar-bench-erp/manifests/test.jsonl`
+- `benchmark/data/hstar-bench-erp/manifests/erp_direct_submit.jsonl`
 
 ### OSR-Bench 先不要跑全量
 
@@ -96,7 +97,7 @@ uv run --project benchmark python benchmark/scripts/create_smoke_subsets.py
 - `benchmark/data/osr-bench/manifests/smoke_20.jsonl`
 - `benchmark/data/panoenv/manifests/smoke_20.jsonl`
 - `benchmark/data/omnispatial/manifests/smoke_20.jsonl`
-- `benchmark/data/hstar-bench-erp/manifests/smoke_rotated_submit_20.jsonl`
+- `benchmark/data/hstar-bench-erp/manifests/smoke_20.jsonl`
 
 ## 2. 生成预测
 
@@ -299,25 +300,25 @@ uv run --project benchmark python benchmark/scripts/predict_benchmark.py \
 
 ### 2.5 H*Bench-ERP 预测
 
-`erp_rotated_submit`
+`erp_direct_submit`
 
 ```bash
 uv run --project benchmark python benchmark/scripts/predict_benchmark.py \
   --benchmark hstar-bench-erp \
   --model mlx-qwen-vl \
   --model-path benchmark/models/Qwen3-VL-4B-Instruct-4bit \
-  --references benchmark/data/hstar-bench-erp/manifests/erp_rotated_submit.jsonl \
+  --references benchmark/data/hstar-bench-erp/manifests/test.jsonl \
   --predictions-out benchmark/results/hstar_erp_submit_predictions.jsonl \
   --skip-download
 ```
 
-`erp_rotated_submit` smoke
+`hstar-bench-erp` smoke
 
 ```bash
 uv run --project benchmark python benchmark/scripts/predict_benchmark.py \
   --benchmark hstar-bench-erp \
   --model mock \
-  --references benchmark/data/hstar-bench-erp/manifests/smoke_rotated_submit_20.jsonl \
+  --references benchmark/data/hstar-bench-erp/manifests/smoke_20.jsonl \
   --predictions-out benchmark/results/hstar_erp_submit_predictions_smoke.jsonl \
   --skip-download
 ```
@@ -414,17 +415,17 @@ uv run --project benchmark python benchmark/scripts/run_benchmark.py evaluate \
 ```bash
 uv run --project benchmark python benchmark/scripts/run_benchmark.py evaluate \
   --benchmark hstar-bench-erp \
-  --references benchmark/data/hstar-bench-erp/manifests/erp_rotated_submit.jsonl \
+  --references benchmark/data/hstar-bench-erp/manifests/test.jsonl \
   --predictions benchmark/results/hstar_erp_submit_predictions.jsonl
 ```
 
-`erp_rotated_submit` smoke：
+`hstar-bench-erp` smoke：
 
 ```bash
 uv run --project benchmark python benchmark/scripts/run_benchmark.py evaluate \
   --benchmark hstar-bench-erp \
-  --references benchmark/data/hstar-bench-erp/manifests/smoke_rotated_submit_20.jsonl \
-  --predictions benchmark/templates/predictions_hstar_erp_rotated_submit_smoke_template.jsonl
+  --references benchmark/data/hstar-bench-erp/manifests/smoke_20.jsonl \
+  --predictions benchmark/templates/predictions_hstar_erp_smoke_template.jsonl
 ```
 
 `hstar-bench-erp` 当前推荐输出格式是：
@@ -433,7 +434,7 @@ uv run --project benchmark python benchmark/scripts/run_benchmark.py evaluate \
 (yaw,pitch)
 ```
 
-评测器仍然兼容旧的 `submit(yaw,pitch)`，但新协议默认使用纯角度格式。
+评测器仍然兼容旧的 `submit(yaw,pitch)`，但主协议本身不再使用 rotated ERP 设定。
 
 ## 最小跑通流程
 

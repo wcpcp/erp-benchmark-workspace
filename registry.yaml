@@ -111,14 +111,13 @@
       "display_name": "H*Bench-ERP",
       "availability": "derived_from_public_hstar_bench",
       "status": "protocol_adapter_ready",
-      "modality": "ERP-direct search benchmark",
-      "primary_focus": "ERP-native object search and path search without perspective-only observation bottlenecks",
-      "benchmark_type": "ERP-direct search / action benchmark",
-      "benchmark_type": "ERP-rotated final-direction benchmark",
+      "modality": "ERP direct target-direction benchmark",
+      "primary_focus": "ERP-native final target direction prediction for object search and path search",
+      "benchmark_type": "ERP direct submit benchmark",
       "notes": [
         "This is a derived benchmark protocol built from the official H*Bench release.",
-        "It keeps the original target windows and instructions but replaces multi-turn perspective-only observation with rotated ERP input.",
-        "The unified workspace keeps both the original perspective protocol and the rotated-ERP submit protocol for controlled comparison."
+        "It keeps the official HOS/HPS entries one-to-one and does not create rotation-expanded copies.",
+        "Each sample asks the model to output the final target direction angles directly from the current ERP panorama."
       ],
       "sources": [
         {
@@ -136,12 +135,17 @@
       ],
       "abilities": [
         "ERP-native target search",
-        "rotation-consistent heading prediction",
         "final target yaw/pitch prediction for object and path search"
       ],
       "subtasks": {
-        "erp_rotated_submit": {
-          "ability": "predict the final target yaw and pitch in the rotated ERP image coordinate system"
+        "hos": {
+          "ability": "predict the final target direction for humanoid object search"
+        },
+        "hps": {
+          "ability": "predict the final target direction for humanoid path search"
+        },
+        "erp_direct_submit": {
+          "ability": "predict the official target yaw and pitch directly from the ERP benchmark image"
         }
       }
     },

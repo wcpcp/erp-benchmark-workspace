@@ -1,37 +1,25 @@
 # H*Bench-ERP Protocol
 
-`H*Bench-ERP` is the ERP-native variant used in this workspace.
+`H*Bench-ERP` in this workspace is a direct aggregation of the official `hos_bench`
+and `hps_bench` benchmark entries.
 
 ## What is kept
 
-- `perspective_multiturn`
-  - close to the official H* setup
-  - useful when you want to compare repeated perspective rotations
+- one official `annotation.json` item becomes one ERP benchmark sample
+- the original task text is kept
+- the official yaw window is kept
+- the official pitch window is kept when provided
 
-- `erp_rotated_submit`
-  - the main ERP-native protocol for this project
-  - each sampled initial yaw rotates the ERP input itself
-  - the question text stays the same
-  - the gold target yaw is rotated into the current ERP image coordinate system
-  - the model only outputs the final angles as `(yaw,pitch)`
+## What is not done
 
-## Main idea
+- no rotation expansion
+- no synthetic `initial yaw` copies
+- no multi-turn `rotate(...)` policy benchmark
 
-For ERP input, changing the initial yaw is not just metadata.
+This benchmark only asks:
 
-If the ERP panorama is horizontally rotated by `delta_yaw`, then the answer must
-rotate with it:
-
-- `yaw_rotated = normalize(yaw_original - delta_yaw)`
-- `pitch_rotated = pitch_original`
-
-This protocol therefore measures:
-
-- ERP-native final direction prediction
-- rotation consistency
-- object/path search under full-panorama input
-
-It does not measure intermediate `rotate(...)` policy quality.
+- given the current ERP panorama
+- where is the target direction for the official HOS/HPS task?
 
 ## Generated files
 
@@ -44,8 +32,8 @@ uv run --project benchmark python benchmark/scripts/prepare_benchmarks.py \
 
 the workspace generates:
 
-- `benchmark/data/hstar-bench-erp/manifests/erp_rotated_submit.jsonl`
-- `benchmark/data/hstar-bench-erp/manifests/perspective_multiturn.jsonl`
+- `benchmark/data/hstar-bench-erp/manifests/test.jsonl`
+- `benchmark/data/hstar-bench-erp/manifests/erp_direct_submit.jsonl`
 
 If you create smoke subsets:
 
@@ -55,24 +43,30 @@ uv run --project benchmark python benchmark/scripts/create_smoke_subsets.py
 
 it also generates:
 
-- `benchmark/data/hstar-bench-erp/manifests/smoke_rotated_submit_20.jsonl`
+- `benchmark/data/hstar-bench-erp/manifests/smoke_20.jsonl`
+
+## Prompt format
+
+Each sample uses a direct ERP question such as:
+
+```text
+Find the ice cream fridge. Return only the target direction angles in this ERP panorama as (yaw,pitch).
+```
+
+`question` and `prompt` are kept identical so the model sees the same text either way.
 
 ## Evaluation
 
-The ERP-native protocol only accepts final answers as angles:
+Expected output:
 
-```bash
+```text
 (yaw,pitch)
 ```
 
-Evaluation checks whether the submitted yaw/pitch falls inside the rotated
-target window.
+The evaluator also accepts:
 
-Example:
-
-```bash
-uv run --project benchmark python benchmark/scripts/run_benchmark.py evaluate \
-  --benchmark hstar-bench-erp \
-  --references benchmark/data/hstar-bench-erp/manifests/erp_rotated_submit.jsonl \
-  --predictions /path/to/predictions.jsonl
+```text
+submit(yaw,pitch)
 ```
+
+Success means the predicted yaw and pitch fall inside the official target window.

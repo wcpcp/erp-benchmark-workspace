@@ -82,7 +82,7 @@ class HstarBenchErpBenchmark(BenchmarkAdapter):
                         "id": sample_id,
                         "prediction": raw_prediction,
                         "answer": gold,
-                        "variant": row.get("task_variant", "rotated_submit"),
+                        "variant": row.get("task_variant", "direct_submit"),
                         "yaw_error": yaw_error,
                         "pitch_error": pitch_error,
                     }
@@ -102,9 +102,9 @@ class HstarBenchErpBenchmark(BenchmarkAdapter):
             "missing_prediction_ids": missing[:10],
             "example_errors": errors,
             "note": (
-                "This evaluates rotated-ERP H*Bench submit-only variants. "
-                "Each ERP input is horizontally rotated to match the sampled initial yaw, "
-                "and the gold target window is rotated into the same ERP image coordinate system."
+                "This evaluates direct ERP H*Bench entries aggregated one-to-one from the "
+                "official HOS/HPS benchmark release. Each sample keeps the original target "
+                "yaw/pitch window and expects a final angle answer in the current ERP panorama."
             ),
         }
         if args.report:

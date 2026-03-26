@@ -7,7 +7,7 @@ from typing import Any
 
 
 def sample_prompt(sample: dict[str, Any]) -> str:
-    prompt = str(sample.get("prompt", sample.get("question", ""))).strip()
+    prompt = str(sample.get("question", sample.get("prompt", ""))).strip()
     if not prompt:
         raise ValueError("Sample is missing prompt/question.")
     return prompt

@@ -7,8 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
-
 
 ACTION_RE = re.compile(r"(rotate|submit)\s*\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)", re.IGNORECASE)
 ANGLE_RE = re.compile(
@@ -78,7 +76,7 @@ def pitch_distance_to_range(pitch: float, target_range: list[float]) -> float:
 
 
 def canonical_direction(target_yaw: list[float], target_pitch: list[float]) -> str:
-    yaw = int(round(yaw_interval_center(target_yaw)))
+    yaw = int(normalize_yaw(round(yaw_interval_center(target_yaw))))
     pitch = int(round((float(target_pitch[0]) + float(target_pitch[1])) / 2.0))
     return f"({yaw},{pitch})"
 
@@ -104,39 +102,6 @@ def parse_action(text: Any) -> ParsedAction | None:
     return None
 
 
-def rotate_relative_yaw(angle: float, start_yaw: float) -> float:
-    return normalize_yaw(float(angle) - float(start_yaw))
-
-
-def rotate_yaw_range(target_range: list[float], start_yaw: float) -> list[float]:
-    return [
-        rotate_relative_yaw(float(target_range[0]), start_yaw),
-        rotate_relative_yaw(float(target_range[1]), start_yaw),
-    ]
-
-
-def build_rotated_erp_image(source_path: Path, output_path: Path, start_yaw: float) -> Path:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    if output_path.exists():
-        return output_path
-
-    with Image.open(source_path) as image:
-        image = image.convert("RGB")
-        width, _ = image.size
-        shift_px = int(round((float(start_yaw) % 360.0) / 360.0 * width)) % width
-        if shift_px == 0:
-            image.save(output_path)
-            return output_path
-
-        left = image.crop((shift_px, 0, width, image.height))
-        right = image.crop((0, 0, shift_px, image.height))
-        rotated = Image.new(image.mode, image.size)
-        rotated.paste(left, (0, 0))
-        rotated.paste(right, (width - shift_px, 0))
-        rotated.save(output_path)
-    return output_path
-
-
 def extract_hstar_archives(raw_dir: Path, extract_root: Path) -> dict[str, Path]:
     extract_root.mkdir(parents=True, exist_ok=True)
     outputs: dict[str, Path] = {}
@@ -156,118 +121,73 @@ def extract_hstar_archives(raw_dir: Path, extract_root: Path) -> dict[str, Path]
     return outputs
 
 
-def iter_episode_sources(extract_root: Path) -> list[dict[str, Any]]:
-    episodes: list[dict[str, Any]] = []
+def _select_scene_image(scene_dir: Path) -> Path | None:
+    image_candidates = (
+        sorted(scene_dir.glob("*.png"))
+        + sorted(scene_dir.glob("*.jpg"))
+        + sorted(scene_dir.glob("*.jpeg"))
+    )
+    return image_candidates[0] if image_candidates else None
+
+
+def _normalize_pitch_range(item: dict[str, Any]) -> list[float]:
+    pitch = item.get("pitch")
+    if isinstance(pitch, list) and len(pitch) >= 2:
+        return [float(pitch[0]), float(pitch[1])]
+    return [-90.0, 90.0]
+
+
+def _build_direct_question(task: str) -> str:
+    task = str(task).strip()
+    if task and task[-1] not in ".!?":
+        task = f"{task}."
+    return f"{task} Return only the target direction angles in this ERP panorama as (yaw,pitch)."
+
+
+def iter_official_hstar_entries(extract_root: Path) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
     for annotation_path in sorted(extract_root.rglob("annotation.json")):
         scene_dir = annotation_path.parent
-        image_candidates = sorted(scene_dir.glob("*.png")) + sorted(scene_dir.glob("*.jpg")) + sorted(scene_dir.glob("*.jpeg"))
-        if not image_candidates:
+        image_path = _select_scene_image(scene_dir)
+        if image_path is None:
             continue
-        image_path = image_candidates[0]
+
         task_family = "hps" if "hps" in str(scene_dir).lower() else "hos"
         scene_name = scene_dir.name
         items = json.loads(annotation_path.read_text(encoding="utf-8"))
-        for item_index, item in enumerate(items):
-            initial_yaws = item.get("initial yaw")
-            if isinstance(initial_yaws, list) and initial_yaws:
-                levels = item.get("level", [0] * len(initial_yaws))
-                zipped = zip(initial_yaws, levels)
-            else:
-                zipped = zip([0, 90, 180, 270], [0, 0, 0, 0])
+        if not isinstance(items, list):
+            continue
 
-            for seed_index, (start_yaw, level) in enumerate(zipped):
-                target_yaw = [float(item["yaw"][0]), float(item["yaw"][1])]
-                target_pitch = (
-                    [float(item["pitch"][0]), float(item["pitch"][1])]
-                    if "pitch" in item
-                    else [-90.0, 90.0]
-                )
-                record_id = f"{task_family}::{scene_name}::{item_index}::{seed_index}"
-                episodes.append(
-                    {
-                        "id": record_id,
-                        "task_family": task_family,
-                        "scene_name": scene_name,
-                        "image_path": str(image_path),
-                        "annotation_path": str(annotation_path),
-                        "instruction": item["task"],
-                        "start_yaw": float(start_yaw),
-                        "start_pitch": 0.0,
-                        "target_yaw": target_yaw,
-                        "target_pitch": target_pitch,
-                        "target_center_yaw": yaw_interval_center(target_yaw),
-                        "target_center_pitch": (target_pitch[0] + target_pitch[1]) / 2.0,
-                        "level": int(level),
-                    }
-                )
-    return episodes
+        for item_index, item in enumerate(items):
+            if not isinstance(item, dict) or "task" not in item or "yaw" not in item:
+                continue
+            target_yaw = [float(item["yaw"][0]), float(item["yaw"][1])]
+            target_pitch = _normalize_pitch_range(item)
+            question = _build_direct_question(str(item["task"]))
+            record_id = f"{task_family}::{scene_name}::{item_index}"
+            entries.append(
+                {
+                    "id": record_id,
+                    "protocol": "erp_direct",
+                    "task_variant": "direct_submit",
+                    "task_family": task_family,
+                    "scene_name": scene_name,
+                    "image_path": str(image_path),
+                    "annotation_path": str(annotation_path),
+                    "instruction": str(item["task"]).strip(),
+                    "target_yaw": target_yaw,
+                    "target_pitch": target_pitch,
+                    "target_center_yaw": yaw_interval_center(target_yaw),
+                    "target_center_pitch": (target_pitch[0] + target_pitch[1]) / 2.0,
+                    "level": int(item.get("level", 0)),
+                    "question": question,
+                    "prompt": question,
+                    "answer": canonical_direction(target_yaw, target_pitch),
+                    "success_rule": "submitted yaw/pitch falls inside the official target window",
+                }
+            )
+    return entries
 
 
 def build_hstar_protocol_records(extract_root: Path) -> dict[str, list[dict[str, Any]]]:
-    episodes = iter_episode_sources(extract_root)
-    perspective_records: list[dict[str, Any]] = []
-    erp_submit_records: list[dict[str, Any]] = []
-    rotated_root = extract_root.parent / "rotated_erp"
-
-    for episode in episodes:
-        perspective_records.append(
-            {
-                **episode,
-                "protocol": "perspective_multiturn",
-                "question": (
-                    "Use perspective observations rendered from the ERP panorama and "
-                    "solve the task with multi-turn actions."
-                ),
-                "prompt": episode["instruction"],
-                "allowed_actions": ["rotate(yaw,pitch)", "submit(yaw,pitch)"],
-                "render_config": {
-                    "projection": "perspective",
-                    "fov": 100,
-                    "initial_yaw": episode["start_yaw"],
-                    "initial_pitch": episode["start_pitch"],
-                    "resolution": [1920, 1080],
-                },
-                "success_rule": "submit inside target yaw/pitch range",
-                "preferred_submit": canonical_direction(episode["target_yaw"], episode["target_pitch"]),
-            }
-        )
-        source_path = Path(str(episode["image_path"]))
-        rotated_name = (
-            f"{episode['task_family']}__{episode['scene_name']}__yaw"
-            f"{int(round(float(episode['start_yaw']))):03d}{source_path.suffix.lower()}"
-        )
-        rotated_image_path = build_rotated_erp_image(
-            source_path,
-            rotated_root / rotated_name,
-            float(episode["start_yaw"]),
-        )
-        rotated_target_yaw = rotate_yaw_range(episode["target_yaw"], episode["start_yaw"])
-
-        erp_submit_records.append(
-            {
-                **episode,
-                "protocol": "erp_rotated",
-                "task_variant": "rotated_submit",
-                "original_image_path": episode["image_path"],
-                "image_path": str(rotated_image_path),
-                "rotation_delta_yaw": float(episode["start_yaw"]),
-                "answer_coordinate_system": "rotated_erp_image_coordinates",
-                "target_yaw_original": list(episode["target_yaw"]),
-                "target_yaw": rotated_target_yaw,
-                "question": (
-                    f"{episode['instruction']} "
-                    "In this ERP panorama, return only the target direction angles in the current panorama coordinates as (yaw,pitch)."
-                ),
-                "prompt": (
-                    f"{episode['instruction']} "
-                    "Return only the target direction angles in the current ERP panorama coordinates as (yaw,pitch)."
-                ),
-                "answer": canonical_direction(rotated_target_yaw, episode["target_pitch"]),
-                "success_rule": "submitted yaw/pitch falls inside the rotated target window",
-            }
-        )
-
-    return {
-        "perspective_multiturn": perspective_records,
-        "erp_rotated_submit": erp_submit_records,
-    }
+    return {"erp_direct_submit": iter_official_hstar_entries(extract_root)}
