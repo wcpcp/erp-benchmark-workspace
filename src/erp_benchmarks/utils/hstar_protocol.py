@@ -157,6 +157,11 @@ def _build_direct_question(task: str) -> str:
     return f"{task} Return only the target direction angles in this ERP panorama as (yaw,pitch)."
 
 
+def _scene_key(scene_dir: Path, extract_root: Path) -> str:
+    relative = scene_dir.relative_to(extract_root)
+    return "__".join(relative.parts)
+
+
 def iter_official_hstar_entries(extract_root: Path) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for annotation_path in sorted(extract_root.rglob("annotation.json")):
@@ -167,6 +172,8 @@ def iter_official_hstar_entries(extract_root: Path) -> list[dict[str, Any]]:
 
         task_family = "hps" if "hps" in str(scene_dir).lower() else "hos"
         scene_name = scene_dir.name
+        scene_path = str(scene_dir.relative_to(extract_root))
+        scene_key = _scene_key(scene_dir, extract_root)
         items = json.loads(annotation_path.read_text(encoding="utf-8"))
         if not isinstance(items, list):
             continue
@@ -177,7 +184,7 @@ def iter_official_hstar_entries(extract_root: Path) -> list[dict[str, Any]]:
             target_yaw = [float(item["yaw"][0]), float(item["yaw"][1])]
             target_pitch = _normalize_pitch_range(item)
             question = _build_direct_question(str(item["task"]))
-            record_id = f"{task_family}::{scene_name}::{item_index}"
+            record_id = f"{task_family}::{scene_key}::{item_index}"
             entries.append(
                 {
                     "id": record_id,
@@ -185,6 +192,7 @@ def iter_official_hstar_entries(extract_root: Path) -> list[dict[str, Any]]:
                     "task_variant": "direct_submit",
                     "task_family": task_family,
                     "scene_name": scene_name,
+                    "scene_path": scene_path,
                     "image_path": str(image_path),
                     "annotation_path": str(annotation_path),
                     "instruction": str(item["task"]).strip(),
