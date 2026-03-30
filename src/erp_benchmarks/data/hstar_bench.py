@@ -9,6 +9,14 @@ from ..utils.hstar_protocol import build_hstar_protocol_records, extract_hstar_a
 from ..utils.io import dump_json
 
 
+def _has_local_hstar_raw(raw_dir: Path) -> bool:
+    if (raw_dir / "hos_bench.zip").exists() or (raw_dir / "hps_bench.zip").exists():
+        return True
+    if (raw_dir / "hos_bench").is_dir() or (raw_dir / "hps_bench").is_dir():
+        return True
+    return any(raw_dir.rglob("annotation.json"))
+
+
 def _resolve_hstar_source_root(raw_dir: Path, extract_root: Path) -> tuple[Path, dict[str, Path], bool]:
     extracted = extract_hstar_archives(raw_dir, extract_root)
     if extracted:
@@ -35,8 +43,7 @@ class HstarBenchDataset(DatasetAdapter):
 
         target = data_root / self.benchmark_id / "raw"
         target.mkdir(parents=True, exist_ok=True)
-        marker = target / "hos_bench.zip"
-        if marker.exists():
+        if _has_local_hstar_raw(target):
             return
         snapshot_download(
             repo_id=self.repo_id,
@@ -106,8 +113,7 @@ class HstarBenchErpDataset(HstarBenchDataset):
 
         target = data_root / self.benchmark_id / "raw"
         target.mkdir(parents=True, exist_ok=True)
-        marker = target / "hos_bench.zip"
-        if marker.exists():
+        if _has_local_hstar_raw(target):
             return
         snapshot_download(
             repo_id=self.repo_id,
