@@ -162,51 +162,61 @@ def _scene_key(scene_dir: Path, extract_root: Path) -> str:
     return "__".join(relative.parts)
 
 
+def _official_hstar_roots(extract_root: Path) -> list[Path]:
+    roots = []
+    for name in ("hos_bench", "hps_bench"):
+        candidate = extract_root / name
+        if candidate.exists() and candidate.is_dir():
+            roots.append(candidate)
+    return roots or [extract_root]
+
+
 def iter_official_hstar_entries(extract_root: Path) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
-    for annotation_path in sorted(extract_root.rglob("annotation.json")):
-        scene_dir = annotation_path.parent
-        image_path = _select_scene_image(scene_dir)
-        if image_path is None:
-            continue
-
-        task_family = "hps" if "hps" in str(scene_dir).lower() else "hos"
-        scene_name = scene_dir.name
-        scene_path = str(scene_dir.relative_to(extract_root))
-        scene_key = _scene_key(scene_dir, extract_root)
-        items = json.loads(annotation_path.read_text(encoding="utf-8"))
-        if not isinstance(items, list):
-            continue
-
-        for item_index, item in enumerate(items):
-            if not isinstance(item, dict) or "task" not in item or "yaw" not in item:
+    for benchmark_root in _official_hstar_roots(extract_root):
+        for annotation_path in sorted(benchmark_root.rglob("annotation.json")):
+            scene_dir = annotation_path.parent
+            image_path = _select_scene_image(scene_dir)
+            if image_path is None:
                 continue
-            target_yaw = [float(item["yaw"][0]), float(item["yaw"][1])]
-            target_pitch = _normalize_pitch_range(item)
-            question = _build_direct_question(str(item["task"]))
-            record_id = f"{task_family}::{scene_key}::{item_index}"
-            entries.append(
-                {
-                    "id": record_id,
-                    "protocol": "erp_direct",
-                    "task_variant": "direct_submit",
-                    "task_family": task_family,
-                    "scene_name": scene_name,
-                    "scene_path": scene_path,
-                    "image_path": str(image_path),
-                    "annotation_path": str(annotation_path),
-                    "instruction": str(item["task"]).strip(),
-                    "target_yaw": target_yaw,
-                    "target_pitch": target_pitch,
-                    "target_center_yaw": yaw_interval_center(target_yaw),
-                    "target_center_pitch": (target_pitch[0] + target_pitch[1]) / 2.0,
-                    "level": _normalize_level(item.get("level", 0)),
-                    "question": question,
-                    "prompt": question,
-                    "answer": canonical_direction(target_yaw, target_pitch),
-                    "success_rule": "submitted yaw/pitch falls inside the official target window",
-                }
-            )
+
+            task_family = "hps" if benchmark_root.name == "hps_bench" else "hos"
+            scene_name = scene_dir.name
+            scene_path = str(scene_dir.relative_to(extract_root))
+            scene_key = _scene_key(scene_dir, extract_root)
+            items = json.loads(annotation_path.read_text(encoding="utf-8"))
+            if not isinstance(items, list):
+                continue
+
+            for item_index, item in enumerate(items):
+                if not isinstance(item, dict) or "task" not in item or "yaw" not in item:
+                    continue
+                target_yaw = [float(item["yaw"][0]), float(item["yaw"][1])]
+                target_pitch = _normalize_pitch_range(item)
+                question = _build_direct_question(str(item["task"]))
+                record_id = f"{task_family}::{scene_key}::{item_index}"
+                entries.append(
+                    {
+                        "id": record_id,
+                        "protocol": "erp_direct",
+                        "task_variant": "direct_submit",
+                        "task_family": task_family,
+                        "scene_name": scene_name,
+                        "scene_path": scene_path,
+                        "image_path": str(image_path),
+                        "annotation_path": str(annotation_path),
+                        "instruction": str(item["task"]).strip(),
+                        "target_yaw": target_yaw,
+                        "target_pitch": target_pitch,
+                        "target_center_yaw": yaw_interval_center(target_yaw),
+                        "target_center_pitch": (target_pitch[0] + target_pitch[1]) / 2.0,
+                        "level": _normalize_level(item.get("level", 0)),
+                        "question": question,
+                        "prompt": question,
+                        "answer": canonical_direction(target_yaw, target_pitch),
+                        "success_rule": "submitted yaw/pitch falls inside the official target window",
+                    }
+                )
     return entries
 
 
