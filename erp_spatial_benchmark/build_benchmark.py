@@ -772,23 +772,18 @@ STRUCTURAL_LABEL_SUBSTRINGS = (
 SEAM_SUBTYPE_TEMPLATES: Dict[str, List[str]] = {
     "nearest_neighbor": [
         "Which listed object is actually nearest to {target_ref} near the {target_side} image edge?",
-        "For the {target_ref} close to the {target_side} image boundary, which candidate is truly the nearest neighbor?",
     ],
     "relative_direction": [
         "What is the relation of {neighbor_ref} relative to {target_ref} across the left-right image boundary?",
-        "Across the image seam, how should {neighbor_ref} be described relative to {target_ref}?",
     ],
     "dedup_count": [
         "The left-edge and right-edge visible parts of {target_ref} should be counted as:",
-        "When counting {target_ref} across the image boundary, these two visible parts should be treated as:",
     ],
     "structure_continuity": [
         "For the {target_ref} touching both image sides, which explanation is more reasonable?",
-        "For the boundary-touching {target_ref}, which structural interpretation is most reasonable?",
     ],
     "same_entity_judgement": [
         "The left-edge and right-edge appearances of {target_ref} are best described as:",
-        "How should the left-side and right-side appearances of {target_ref} be interpreted?",
     ],
 }
 
