@@ -205,6 +205,7 @@ Current default review tasks:
 - seam relative direction
 - seam dedup count
 - seam structure continuity
+  - only for structure-like categories such as walls, tabletops/counters, roads/floors, ceiling-like structures, and railings
 - seam same-entity judgement
 - polar shape recovery
 - relative 3D position

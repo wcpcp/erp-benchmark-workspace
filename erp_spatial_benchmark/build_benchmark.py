@@ -432,6 +432,11 @@ def pick_template(task_id: str, key: str) -> str:
     return variants[stable_hash(f"{task_id}:{key}") % len(variants)]
 
 
+def pick_variant(variants: Sequence[str], key: str) -> str:
+    variants = list(variants)
+    return variants[stable_hash(key) % len(variants)]
+
+
 def option_key(index: int) -> str:
     return chr(ord("A") + index)
 
@@ -735,19 +740,56 @@ SEAM_SAME_ENTITY_OPTIONS = [
 ]
 STRUCTURAL_LABEL_HINTS = {
     "wall",
-    "door",
-    "window",
     "table",
     "desk",
     "counter",
     "countertop",
-    "shelf",
-    "cabinet",
-    "railing",
-    "barrier",
-    "ceiling",
+    "road",
     "floor",
-    "hallway",
+    "ground",
+    "ceiling",
+    "railing",
+    "guardrail",
+    "handrail",
+    "barrier",
+    "ledge",
+    "curb",
+}
+STRUCTURAL_LABEL_SUBSTRINGS = (
+    "wall",
+    "table",
+    "desk",
+    "counter",
+    "countertop",
+    "road",
+    "floor",
+    "ground",
+    "ceiling",
+    "railing",
+    "guardrail",
+    "handrail",
+)
+SEAM_SUBTYPE_TEMPLATES: Dict[str, List[str]] = {
+    "nearest_neighbor": [
+        "Which listed object is actually nearest to {target_ref} near the {target_side} image edge?",
+        "For the {target_ref} close to the {target_side} image boundary, which candidate is truly the nearest neighbor?",
+    ],
+    "relative_direction": [
+        "What is the relation of {neighbor_ref} relative to {target_ref} across the left-right image boundary?",
+        "Across the image seam, how should {neighbor_ref} be described relative to {target_ref}?",
+    ],
+    "dedup_count": [
+        "The left-edge and right-edge visible parts of {target_ref} should be counted as:",
+        "When counting {target_ref} across the image boundary, these two visible parts should be treated as:",
+    ],
+    "structure_continuity": [
+        "For the {target_ref} touching both image sides, which explanation is more reasonable?",
+        "For the boundary-touching {target_ref}, which structural interpretation is most reasonable?",
+    ],
+    "same_entity_judgement": [
+        "The left-edge and right-edge appearances of {target_ref} are best described as:",
+        "How should the left-side and right-side appearances of {target_ref} be interpreted?",
+    ],
 }
 
 
@@ -817,9 +859,7 @@ def seam_structure_like(entity: Entity) -> bool:
     label = normalize_phrase(entity.label)
     if label in STRUCTURAL_LABEL_HINTS:
         return True
-    attrs = entity.semantic.attributes or {}
-    material = normalize_phrase(attrs.get("material", "")) if attrs.get("material") else ""
-    return material in {"wood", "metal", "glass", "concrete", "tile"}
+    return any(token in label for token in STRUCTURAL_LABEL_SUBSTRINGS)
 
 
 def build_seam_nearest_neighbor_mc(scene: SceneMetadata, target: Entity, quality: float) -> Optional[Dict[str, Any]]:
@@ -833,8 +873,8 @@ def build_seam_nearest_neighbor_mc(scene: SceneMetadata, target: Entity, quality
 
     option_entities = [correct, lure] + distractors
     option_texts = [entity_ref(entity) for entity in option_entities]
-    question = pick_template(
-        "seam_continuity_mc",
+    question = pick_variant(
+        SEAM_SUBTYPE_TEMPLATES["nearest_neighbor"],
         f"{scene.scene_id}:{target.entity_id}:{correct.entity_id}:{lure.entity_id}:nearest",
     ).format(
         target_ref=entity_ref(target),
@@ -880,9 +920,12 @@ def build_seam_relative_direction_mc(scene: SceneMetadata, target: Entity, quali
     if bundles is None:
         return None
     correct = bundles["correct"]
-    question = (
-        f"What is the relation of {entity_ref(correct)} relative to {entity_ref(target)} "
-        f"across the left-right image boundary?"
+    question = pick_variant(
+        SEAM_SUBTYPE_TEMPLATES["relative_direction"],
+        f"{scene.scene_id}:{target.entity_id}:{correct.entity_id}:relative_direction",
+    ).format(
+        neighbor_ref=entity_ref(correct),
+        target_ref=entity_ref(target),
     )
     choices = choice_rows(SEAM_RELATION_OPTIONS)
     answer_text = "adjacent across the boundary"
@@ -919,8 +962,11 @@ def build_seam_dedup_count_mc(scene: SceneMetadata, target: Entity, quality: flo
         return None
     if not bool(target.seam_crossing_flag):
         return None
-    question = (
-        f"The left-edge and right-edge visible parts of {entity_ref(target)} should be counted as:"
+    question = pick_variant(
+        SEAM_SUBTYPE_TEMPLATES["dedup_count"],
+        f"{scene.scene_id}:{target.entity_id}:dedup_count",
+    ).format(
+        target_ref=entity_ref(target),
     )
     choices = choice_rows(SEAM_DEDUP_OPTIONS)
     answer_text = "one continuous object"
@@ -955,8 +1001,11 @@ def build_seam_structure_continuity_mc(scene: SceneMetadata, target: Entity, qua
         return None
     if not seam_structure_like(target):
         return None
-    question = (
-        f"For the {entity_ref(target)} touching both image sides, which explanation is more reasonable?"
+    question = pick_variant(
+        SEAM_SUBTYPE_TEMPLATES["structure_continuity"],
+        f"{scene.scene_id}:{target.entity_id}:structure_continuity",
+    ).format(
+        target_ref=entity_ref(target),
     )
     choices = choice_rows(SEAM_STRUCTURE_OPTIONS)
     answer_text = "one continuous structure"
@@ -990,8 +1039,11 @@ def build_seam_same_entity_mc(scene: SceneMetadata, target: Entity, quality: flo
     side = seam_contact_side(target, scene)
     if side is None or not bool(target.seam_crossing_flag):
         return None
-    question = (
-        f"The left-edge and right-edge appearances of {entity_ref(target)} are best described as:"
+    question = pick_variant(
+        SEAM_SUBTYPE_TEMPLATES["same_entity_judgement"],
+        f"{scene.scene_id}:{target.entity_id}:same_entity_judgement",
+    ).format(
+        target_ref=entity_ref(target),
     )
     choices = choice_rows(SEAM_SAME_ENTITY_OPTIONS)
     answer_text = "same object at different image positions"
