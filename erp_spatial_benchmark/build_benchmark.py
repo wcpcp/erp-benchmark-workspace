@@ -690,7 +690,7 @@ def benchmark_item(
 def build_referring_grounding_bfov(scene: SceneMetadata, target: Entity, anchors: Sequence[Dict[str, Any]], anchor_index: int, quality: float) -> Optional[Dict[str, Any]]:
     if target.resolved_bfov is None:
         return None
-    target_ref = entity_ref(target, scene, f"{scene.scene_id}:referring_grounding_bfov:{target.entity_id}:target")
+    target_ref = descriptive_entity_ref(target)
     question = pick_template("referring_grounding_bfov", f"{scene.scene_id}:{target.entity_id}").format(target_ref=target_ref)
     answer_text = bfov_text(target)
     return benchmark_item(
@@ -720,7 +720,7 @@ def build_absolute_direction_mc(scene: SceneMetadata, target: Entity, anchor_ind
     neighbors = sector_distractors(sector)
     options = [sector] + neighbors[:3]
     choices = choice_rows(options)
-    target_ref = entity_ref(target, scene, f"{scene.scene_id}:absolute_direction_mc:{target.entity_id}:target")
+    target_ref = descriptive_entity_ref(target)
     question = pick_template("absolute_direction_mc", f"{scene.scene_id}:{target.entity_id}").format(target_ref=target_ref)
     return benchmark_item(
         scene=scene,
@@ -935,10 +935,10 @@ def build_seam_nearest_neighbor_mc(scene: SceneMetadata, target: Entity, quality
 
     option_entities = [correct, lure] + distractors
     item_key = f"{scene.scene_id}:seam_nearest_neighbor:{target.entity_id}:{correct.entity_id}:{lure.entity_id}"
-    target_ref = entity_ref(target, scene, f"{item_key}:target")
-    correct_ref = entity_ref(correct, scene, f"{item_key}:correct")
-    lure_ref = entity_ref(lure, scene, f"{item_key}:lure")
-    distractor_refs = [entity_ref(entity, scene, f"{item_key}:distractor:{idx}:{entity.entity_id}") for idx, entity in enumerate(distractors)]
+    target_ref = descriptive_entity_ref(target)
+    correct_ref = descriptive_entity_ref(correct)
+    lure_ref = descriptive_entity_ref(lure)
+    distractor_refs = [descriptive_entity_ref(entity) for entity in distractors]
     option_texts = [correct_ref, lure_ref] + distractor_refs
     question = pick_variant(
         SEAM_SUBTYPE_TEMPLATES["nearest_neighbor"],
@@ -988,8 +988,8 @@ def build_seam_relative_direction_mc(scene: SceneMetadata, target: Entity, quali
         return None
     correct = bundles["correct"]
     item_key = f"{scene.scene_id}:seam_relative_direction:{target.entity_id}:{correct.entity_id}"
-    neighbor_ref = entity_ref(correct, scene, f"{item_key}:neighbor")
-    target_ref = entity_ref(target, scene, f"{item_key}:target")
+    neighbor_ref = descriptive_entity_ref(correct)
+    target_ref = descriptive_entity_ref(target)
     question = pick_variant(
         SEAM_SUBTYPE_TEMPLATES["relative_direction"],
         f"{item_key}:question",
@@ -1033,7 +1033,7 @@ def build_seam_dedup_count_mc(scene: SceneMetadata, target: Entity, quality: flo
     if not bool(target.seam_crossing_flag):
         return None
     item_key = f"{scene.scene_id}:seam_dedup_count:{target.entity_id}"
-    target_ref = entity_ref(target, scene, f"{item_key}:target")
+    target_ref = descriptive_entity_ref(target)
     question = pick_variant(
         SEAM_SUBTYPE_TEMPLATES["dedup_count"],
         f"{item_key}:question",
@@ -1074,7 +1074,7 @@ def build_seam_structure_continuity_mc(scene: SceneMetadata, target: Entity, qua
     if not seam_structure_like(target):
         return None
     item_key = f"{scene.scene_id}:seam_structure_continuity:{target.entity_id}"
-    target_ref = entity_ref(target, scene, f"{item_key}:target")
+    target_ref = descriptive_entity_ref(target)
     question = pick_variant(
         SEAM_SUBTYPE_TEMPLATES["structure_continuity"],
         f"{item_key}:question",
@@ -1114,7 +1114,7 @@ def build_seam_same_entity_mc(scene: SceneMetadata, target: Entity, quality: flo
     if side is None or not bool(target.seam_crossing_flag):
         return None
     item_key = f"{scene.scene_id}:seam_same_entity:{target.entity_id}"
-    target_ref = entity_ref(target, scene, f"{item_key}:target")
+    target_ref = descriptive_entity_ref(target)
     question = pick_variant(
         SEAM_SUBTYPE_TEMPLATES["same_entity_judgement"],
         f"{item_key}:question",
@@ -1174,8 +1174,8 @@ def build_relative_direction_mc(scene: SceneMetadata, reference: Entity, target:
     if margin < 8.0:
         return None
     item_key = f"{scene.scene_id}:relative_direction_mc:{reference.entity_id}:{target.entity_id}"
-    reference_ref = entity_ref(reference, scene, f"{item_key}:reference")
-    target_ref = entity_ref(target, scene, f"{item_key}:target")
+    reference_ref = descriptive_entity_ref(reference)
+    target_ref = descriptive_entity_ref(target)
     choices = choice_rows(PANORAMIC_RELATION_LABELS)
     question = pick_template("relative_direction_mc", f"{scene.scene_id}:{reference.entity_id}:{target.entity_id}").format(
         reference_ref=reference_ref,
@@ -1211,7 +1211,7 @@ def build_camera_rotation_transform_mc(scene: SceneMetadata, target: Entity, anc
     raw_delta = wrapped_delta_deg(yaw_deg_360(target) - ((float(angle_deg) if rotation_direction == "right" else -float(angle_deg)) % 360.0))
     margin = closest_boundary_margin(abs(raw_delta), [15.0, 90.0, 150.0, 180.0])
     item_key = f"{scene.scene_id}:camera_rotation_transform_mc:{target.entity_id}:{rotation_direction}:{angle_deg}"
-    target_ref = entity_ref(target, scene, f"{item_key}:target")
+    target_ref = descriptive_entity_ref(target)
     choices = choice_rows(REORIENTED_RELATION_LABELS)
     question = pick_template("camera_rotation_transform_mc", f"{scene.scene_id}:{target.entity_id}:{rotation_direction}:{angle_deg}").format(
         angle_deg=angle_deg,
@@ -1249,8 +1249,8 @@ def build_object_conditioned_reorientation_mc(scene: SceneMetadata, facing: Enti
     if margin < 8.0:
         return None
     item_key = f"{scene.scene_id}:object_conditioned_reorientation_mc:{facing.entity_id}:{target.entity_id}"
-    facing_ref = entity_ref(facing, scene, f"{item_key}:facing")
-    target_ref = entity_ref(target, scene, f"{item_key}:target")
+    facing_ref = descriptive_entity_ref(facing)
+    target_ref = descriptive_entity_ref(target)
     choices = choice_rows(REORIENTED_RELATION_LABELS)
     question = pick_template("object_conditioned_reorientation_mc", f"{scene.scene_id}:{facing.entity_id}:{target.entity_id}").format(
         facing_ref=facing_ref,
@@ -1325,7 +1325,7 @@ def build_observer_distance_choice(scene: SceneMetadata, anchors: Sequence[Dict[
         return None
     closest = min(selected, key=lambda entity: float(entity.entity_center_depth))
     item_key = f"{scene.scene_id}:observer_distance_choice:{selected[0].entity_id}:{selected[-1].entity_id}"
-    option_texts = [entity_ref(entity, scene, f"{item_key}:candidate:{idx}:{entity.entity_id}") for idx, entity in enumerate(selected)]
+    option_texts = [descriptive_entity_ref(entity) for entity in selected]
     choices = choice_rows(option_texts)
     question = pick_template("observer_distance_choice", f"{scene.scene_id}:{selected[0].entity_id}:{selected[-1].entity_id}")
     answer_key = choices[[entity.entity_id for entity in selected].index(closest.entity_id)]["key"]
@@ -1356,8 +1356,8 @@ def build_relative_3d_position_mc(scene: SceneMetadata, entity_a: Entity, entity
     if not relation:
         return None
     item_key = f"{scene.scene_id}:relative_3d_position_mc:{entity_a.entity_id}:{entity_b.entity_id}"
-    entity_a_ref = entity_ref(entity_a, scene, f"{item_key}:entity_a")
-    entity_b_ref = entity_ref(entity_b, scene, f"{item_key}:entity_b")
+    entity_a_ref = descriptive_entity_ref(entity_a)
+    entity_b_ref = descriptive_entity_ref(entity_b)
     options = relative_3d_choices(entity_a, entity_b, relation, parts)
     choices = choice_rows(options)
     question = pick_template("relative_3d_position_mc", f"{scene.scene_id}:{entity_a.entity_id}:{entity_b.entity_id}").format(

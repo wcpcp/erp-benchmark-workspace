@@ -132,9 +132,14 @@ ambiguous referring expressions. Current blocked anchor substrings include:
 
 These exclusions currently apply at anchor selection time only.
 
-To reduce semantic leakage in question text, benchmark prompts do not directly
-use rich captions or free-form regrounding phrases as public references. The
-builder instead uses a sanitized reference form:
+For most tasks, benchmark prompts continue to use entity-level referring
+expressions such as `reground_query` or `caption_brief`, because those richer
+references are useful for measuring language-object understanding and do not
+normally leak the answer.
+
+Only the high-latitude distortion tasks use a sanitized reference form, to
+avoid leaking shape-related cues in the prompt itself. In those polar tasks,
+the builder uses:
 
 - coarse object label
 - plus one localization hint
@@ -142,8 +147,9 @@ builder instead uses a sanitized reference form:
   - normalized ERP box coordinates `[x1, y1, x2, y2]` in a `0-1000` scale
   - or BFOV `[yaw, pitch, x_fov, y_fov]`
 
-This keeps the prompt informative enough to locate the target while avoiding
-easy leakage of shape, material, color, or other rich semantic attributes.
+This keeps the polar prompts informative enough to locate the target while
+avoiding easy leakage of shape, material, color, or other rich semantic
+attributes.
 
 ## Inputs
 
