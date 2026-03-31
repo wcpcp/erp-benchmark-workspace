@@ -125,8 +125,8 @@ TASK_SPECS: Dict[str, Dict[str, Any]] = {
     "seam_continuity_mc": {
         "ability_group": "erp_representation_understanding",
         "templates": [
-            "When the left and right ERP edges are understood as connected, which listed object is actually nearest in panoramic direction to {target_ref}?",
-            "If the ERP panorama is treated as one continuous 360 ring rather than a flat rectangle, which candidate lies closest to {target_ref}?",
+            "Which listed object is actually nearest to {target_ref} near the {target_side} image edge?",
+            "For the {target_ref} close to the {target_side} image boundary, which candidate is truly the nearest neighbor?",
         ],
         "answer_format": "4_way_multiple_choice",
     },
@@ -287,9 +287,13 @@ def generate_scene_candidates(scene: SceneMetadata) -> List[Dict[str, Any]]:
         for row in [
             build_referring_grounding_bfov(scene, anchor, anchors, anchor_index, quality),
             build_absolute_direction_mc(scene, anchor, anchor_index, quality),
-            build_seam_adjacency_mc(scene, anchor, anchors, anchor_index, quality),
             build_polar_shape_recovery(scene, anchor, anchor_index, quality),
         ]:
+            if row and row["item_id"] not in used_item_ids:
+                candidates.append(row)
+                used_item_ids.add(row["item_id"])
+
+        for row in build_seam_continuity_items(scene, anchor, anchors, anchor_index, quality):
             if row and row["item_id"] not in used_item_ids:
                 candidates.append(row)
                 used_item_ids.add(row["item_id"])
@@ -706,6 +710,333 @@ def flat_x_gap_px(entity_a: Entity, entity_b: Entity) -> float:
     return abs(float(entity_a.center_xy[0]) - float(entity_b.center_xy[0]))
 
 
+SEAM_RELATION_OPTIONS = [
+    "adjacent across the boundary",
+    "opposite in the scene",
+    "far apart on the same side",
+    "cannot determine",
+]
+SEAM_DEDUP_OPTIONS = [
+    "one continuous object",
+    "two different objects",
+    "cannot determine",
+]
+SEAM_STRUCTURE_OPTIONS = [
+    "one continuous structure",
+    "two different structures",
+    "a reflection",
+    "cannot determine",
+]
+SEAM_SAME_ENTITY_OPTIONS = [
+    "same object at different image positions",
+    "same object at the same image position",
+    "different objects at different image positions",
+    "different objects at the same image position",
+]
+STRUCTURAL_LABEL_HINTS = {
+    "wall",
+    "door",
+    "window",
+    "table",
+    "desk",
+    "counter",
+    "countertop",
+    "shelf",
+    "cabinet",
+    "railing",
+    "barrier",
+    "ceiling",
+    "floor",
+    "hallway",
+}
+
+
+def seam_wrap_candidate_sets(scene: SceneMetadata, target: Entity) -> Optional[Dict[str, Any]]:
+    if not scene.erp_width:
+        return None
+    target_side = seam_contact_side(target, scene)
+    if target_side is None:
+        return None
+    opposite_side = "right" if target_side == "left" else "left"
+    width = float(scene.erp_width)
+
+    correct_pool: List[Tuple[float, float, float, Entity]] = []
+    lure_pool: List[Tuple[float, float, float, Entity]] = []
+    distractor_pool: List[Tuple[float, float, float, Entity]] = []
+
+    label_counts = Counter(entity.label for entity in scene.entities)
+    for entity in scene.entities:
+        if entity.entity_id == target.entity_id:
+            continue
+        if not benchmark_entity_eligible(entity):
+            continue
+        gap = wrap_yaw_gap_deg(target, entity)
+        flat_gap = flat_x_gap_px(target, entity)
+        score = float(score_entity(entity, label_counts, scene))
+        same_side = seam_contact_side(entity, scene)
+
+        if same_side == opposite_side and gap <= 15.0 and flat_gap >= width * 0.65:
+            correct_pool.append((gap, -flat_gap, -score, entity))
+            continue
+        if flat_gap <= width * 0.25 and gap >= 35.0:
+            lure_pool.append((flat_gap, gap, -score, entity))
+            continue
+        if gap >= 35.0:
+            distractor_pool.append((gap, -score, flat_gap, entity))
+
+    if not correct_pool or not lure_pool or len(distractor_pool) < 2:
+        return None
+
+    correct_pool.sort(key=lambda item: (item[0], item[1], item[2], item[3].entity_id))
+    lure_pool.sort(key=lambda item: (item[0], item[1], item[2], item[3].entity_id))
+    distractor_pool.sort(key=lambda item: (item[0], item[1], item[2], item[3].entity_id))
+
+    correct = correct_pool[0][3]
+    lure = lure_pool[0][3]
+    distractors = [item[3] for item in distractor_pool[:2]]
+    return {
+        "target_side": target_side,
+        "correct": correct,
+        "correct_gap": correct_pool[0][0],
+        "correct_flat_gap": -correct_pool[0][1],
+        "lure": lure,
+        "lure_gap": lure_pool[0][1],
+        "lure_flat_gap": lure_pool[0][0],
+        "distractors": distractors,
+    }
+
+
+def seam_boundary_direction(scene: SceneMetadata, entity: Entity) -> str:
+    side = seam_contact_side(entity, scene)
+    if side:
+        return side
+    return seam_primary_side(entity, scene) or "boundary"
+
+
+def seam_structure_like(entity: Entity) -> bool:
+    label = normalize_phrase(entity.label)
+    if label in STRUCTURAL_LABEL_HINTS:
+        return True
+    attrs = entity.semantic.attributes or {}
+    material = normalize_phrase(attrs.get("material", "")) if attrs.get("material") else ""
+    return material in {"wood", "metal", "glass", "concrete", "tile"}
+
+
+def build_seam_nearest_neighbor_mc(scene: SceneMetadata, target: Entity, quality: float) -> Optional[Dict[str, Any]]:
+    bundles = seam_wrap_candidate_sets(scene, target)
+    if bundles is None:
+        return None
+    correct = bundles["correct"]
+    lure = bundles["lure"]
+    distractors = bundles["distractors"]
+    target_side = bundles["target_side"]
+
+    option_entities = [correct, lure] + distractors
+    option_texts = [entity_ref(entity) for entity in option_entities]
+    question = pick_template(
+        "seam_continuity_mc",
+        f"{scene.scene_id}:{target.entity_id}:{correct.entity_id}:{lure.entity_id}:nearest",
+    ).format(
+        target_ref=entity_ref(target),
+        target_side=target_side,
+    )
+    choices, answer_key = shuffled_choice_rows(
+        option_texts,
+        entity_ref(correct),
+        f"seam_continuity_mc:nearest:{scene.scene_id}:{target.entity_id}:{correct.entity_id}:{lure.entity_id}",
+    )
+    return benchmark_item(
+        scene=scene,
+        task_id="seam_continuity_mc",
+        item_id=f"{scene.scene_id}_seam_continuity_mc_nearest_neighbor_{target.entity_id}_{correct.entity_id}",
+        question=question,
+        answer=answer_key,
+        answer_text=entity_ref(correct),
+        options=choices,
+        target_entities=[target.entity_id, correct.entity_id, lure.entity_id] + [entity.entity_id for entity in distractors],
+        metadata={
+            "seam_subtype": "nearest_neighbor",
+            "target_ref": entity_ref(target),
+            "target_side": target_side,
+            "correct_ref": entity_ref(correct),
+            "correct_wrap_gap_deg": round(float(bundles["correct_gap"]), 2),
+            "correct_flat_x_gap_px": round(float(bundles["correct_flat_gap"]), 2),
+            "lure_ref": entity_ref(lure),
+            "lure_wrap_gap_deg": round(float(bundles["lure_gap"]), 2),
+            "lure_flat_x_gap_px": round(float(bundles["lure_flat_gap"]), 2),
+        },
+        difficulty="hard",
+        quality_score=(quality + float(score_entity(correct, Counter(e.label for e in scene.entities), scene))) / 2.0,
+        diagnostic_slices=dedupe_keep_order(slices_for_entity(target) + slices_for_entity(correct) + ["seam"]),
+        requires_manual_review=True,
+        review_notes=[
+            "Verify that the correct candidate is truly the nearest wrap-around neighbor and that the lure only looks close in the flat ERP rectangle."
+        ],
+    )
+
+
+def build_seam_relative_direction_mc(scene: SceneMetadata, target: Entity, quality: float) -> Optional[Dict[str, Any]]:
+    bundles = seam_wrap_candidate_sets(scene, target)
+    if bundles is None:
+        return None
+    correct = bundles["correct"]
+    question = (
+        f"What is the relation of {entity_ref(correct)} relative to {entity_ref(target)} "
+        f"across the left-right image boundary?"
+    )
+    choices = choice_rows(SEAM_RELATION_OPTIONS)
+    answer_text = "adjacent across the boundary"
+    return benchmark_item(
+        scene=scene,
+        task_id="seam_continuity_mc",
+        item_id=f"{scene.scene_id}_seam_continuity_mc_relative_direction_{target.entity_id}_{correct.entity_id}",
+        question=question,
+        answer=label_to_choice_key(SEAM_RELATION_OPTIONS, answer_text),
+        answer_text=answer_text,
+        options=choices,
+        target_entities=[target.entity_id, correct.entity_id],
+        metadata={
+            "seam_subtype": "relative_direction",
+            "target_ref": entity_ref(target),
+            "neighbor_ref": entity_ref(correct),
+            "target_side": bundles["target_side"],
+            "neighbor_side": seam_boundary_direction(scene, correct),
+            "wrap_gap_deg": round(float(bundles["correct_gap"]), 2),
+        },
+        difficulty="medium",
+        quality_score=(quality + float(score_entity(correct, Counter(e.label for e in scene.entities), scene))) / 2.0,
+        diagnostic_slices=dedupe_keep_order(slices_for_entity(target) + slices_for_entity(correct) + ["seam"]),
+        requires_manual_review=True,
+        review_notes=[
+            "Verify that the pair is genuinely close only under wrap-around and that 'adjacent across the boundary' is the correct relation."
+        ],
+    )
+
+
+def build_seam_dedup_count_mc(scene: SceneMetadata, target: Entity, quality: float) -> Optional[Dict[str, Any]]:
+    side = seam_contact_side(target, scene)
+    if side is None:
+        return None
+    if not bool(target.seam_crossing_flag):
+        return None
+    question = (
+        f"The left-edge and right-edge visible parts of {entity_ref(target)} should be counted as:"
+    )
+    choices = choice_rows(SEAM_DEDUP_OPTIONS)
+    answer_text = "one continuous object"
+    return benchmark_item(
+        scene=scene,
+        task_id="seam_continuity_mc",
+        item_id=f"{scene.scene_id}_seam_continuity_mc_dedup_count_{target.entity_id}",
+        question=question,
+        answer=label_to_choice_key(SEAM_DEDUP_OPTIONS, answer_text),
+        answer_text=answer_text,
+        options=choices,
+        target_entities=[target.entity_id],
+        metadata={
+            "seam_subtype": "dedup_count",
+            "target_ref": entity_ref(target),
+            "target_side": side,
+            "seam_crossing_flag": bool(target.seam_crossing_flag),
+        },
+        difficulty="medium",
+        quality_score=quality,
+        diagnostic_slices=dedupe_keep_order(slices_for_entity(target) + ["seam"]),
+        requires_manual_review=True,
+        review_notes=[
+            "Verify that the entity truly wraps across the seam and should be counted once rather than twice."
+        ],
+    )
+
+
+def build_seam_structure_continuity_mc(scene: SceneMetadata, target: Entity, quality: float) -> Optional[Dict[str, Any]]:
+    side = seam_contact_side(target, scene)
+    if side is None or not bool(target.seam_crossing_flag):
+        return None
+    if not seam_structure_like(target):
+        return None
+    question = (
+        f"For the {entity_ref(target)} touching both image sides, which explanation is more reasonable?"
+    )
+    choices = choice_rows(SEAM_STRUCTURE_OPTIONS)
+    answer_text = "one continuous structure"
+    return benchmark_item(
+        scene=scene,
+        task_id="seam_continuity_mc",
+        item_id=f"{scene.scene_id}_seam_continuity_mc_structure_continuity_{target.entity_id}",
+        question=question,
+        answer=label_to_choice_key(SEAM_STRUCTURE_OPTIONS, answer_text),
+        answer_text=answer_text,
+        options=choices,
+        target_entities=[target.entity_id],
+        metadata={
+            "seam_subtype": "structure_continuity",
+            "target_ref": entity_ref(target),
+            "target_label": target.label,
+            "target_side": side,
+            "seam_crossing_flag": bool(target.seam_crossing_flag),
+        },
+        difficulty="hard",
+        quality_score=quality,
+        diagnostic_slices=dedupe_keep_order(slices_for_entity(target) + ["seam"]),
+        requires_manual_review=True,
+        review_notes=[
+            "Verify that this is a structure-like category where seam continuity is a meaningful interpretation."
+        ],
+    )
+
+
+def build_seam_same_entity_mc(scene: SceneMetadata, target: Entity, quality: float) -> Optional[Dict[str, Any]]:
+    side = seam_contact_side(target, scene)
+    if side is None or not bool(target.seam_crossing_flag):
+        return None
+    question = (
+        f"The left-edge and right-edge appearances of {entity_ref(target)} are best described as:"
+    )
+    choices = choice_rows(SEAM_SAME_ENTITY_OPTIONS)
+    answer_text = "same object at different image positions"
+    return benchmark_item(
+        scene=scene,
+        task_id="seam_continuity_mc",
+        item_id=f"{scene.scene_id}_seam_continuity_mc_same_entity_{target.entity_id}",
+        question=question,
+        answer=label_to_choice_key(SEAM_SAME_ENTITY_OPTIONS, answer_text),
+        answer_text=answer_text,
+        options=choices,
+        target_entities=[target.entity_id],
+        metadata={
+            "seam_subtype": "same_entity_judgement",
+            "target_ref": entity_ref(target),
+            "target_side": side,
+            "seam_crossing_flag": bool(target.seam_crossing_flag),
+        },
+        difficulty="medium",
+        quality_score=quality,
+        diagnostic_slices=dedupe_keep_order(slices_for_entity(target) + ["seam"]),
+        requires_manual_review=True,
+        review_notes=[
+            "Verify that the two boundary appearances truly come from one seam-crossing entity rather than two different nearby instances."
+        ],
+    )
+
+
+def build_seam_continuity_items(
+    scene: SceneMetadata,
+    target: Entity,
+    anchors: Sequence[Dict[str, Any]],
+    anchor_index: int,
+    quality: float,
+) -> List[Dict[str, Any]]:
+    rows: List[Optional[Dict[str, Any]]] = [
+        build_seam_nearest_neighbor_mc(scene, target, quality),
+        build_seam_relative_direction_mc(scene, target, quality),
+        build_seam_dedup_count_mc(scene, target, quality),
+        build_seam_structure_continuity_mc(scene, target, quality),
+        build_seam_same_entity_mc(scene, target, quality),
+    ]
+    return [row for row in rows if row is not None]
+
+
 def build_relative_direction_mc(scene: SceneMetadata, reference: Entity, target: Entity, anchor_index: int, partner_index: int, quality: float) -> Optional[Dict[str, Any]]:
     delta = wrapped_delta_deg(yaw_deg_360(target) - yaw_deg_360(reference))
     relation = panoramic_relation_from_delta(delta, opposite_label="opposite")
@@ -738,110 +1069,6 @@ def build_relative_direction_mc(scene: SceneMetadata, reference: Entity, target:
         difficulty=difficulty_from_margin(margin),
         quality_score=(quality + float(score_entity(target, Counter(e.label for e in scene.entities), scene))) / 2.0,
         diagnostic_slices=sorted(set(slices_for_entity(reference) + slices_for_entity(target))),
-    )
-
-
-def build_seam_adjacency_mc(scene: SceneMetadata, target: Entity, anchors: Sequence[Dict[str, Any]], anchor_index: int, quality: float) -> Optional[Dict[str, Any]]:
-    if not scene.erp_width:
-        return None
-    target_side = seam_contact_side(target, scene)
-    if target_side is None:
-        return None
-    opposite_side = "right" if target_side == "left" else "left"
-    width = float(scene.erp_width)
-
-    candidates: List[Tuple[float, float, Entity]] = []
-    for entity in scene.entities:
-        if entity.entity_id == target.entity_id:
-            continue
-        if not benchmark_entity_eligible(entity):
-            continue
-        if seam_contact_side(entity, scene) != opposite_side:
-            continue
-        gap = wrap_yaw_gap_deg(target, entity)
-        if gap > 15.0:
-            continue
-        flat_gap = flat_x_gap_px(target, entity)
-        if flat_gap < width * 0.65:
-            continue
-        score = float(score_entity(entity, Counter(e.label for e in scene.entities), scene))
-        candidates.append((gap, flat_gap, -score, entity))
-    if not candidates:
-        return None
-
-    candidates.sort(key=lambda item: (item[0], -item[1], item[2], item[3].entity_id))
-    correct = candidates[0][3]
-    correct_gap = candidates[0][0]
-    correct_flat_gap = candidates[0][1]
-
-    lure_pool: List[Tuple[float, float, Entity]] = []
-    distractor_pool: List[Tuple[float, float, Entity]] = []
-    for entity in scene.entities:
-        if entity.entity_id in {target.entity_id, correct.entity_id}:
-            continue
-        if not benchmark_entity_eligible(entity):
-            continue
-        gap = wrap_yaw_gap_deg(target, entity)
-        flat_gap = flat_x_gap_px(target, entity)
-        score = float(score_entity(entity, Counter(e.label for e in scene.entities), scene))
-        if flat_gap <= width * 0.25 and gap >= max(35.0, correct_gap + 20.0):
-            lure_pool.append((flat_gap, -score, entity))
-            continue
-        if gap >= max(35.0, correct_gap + 20.0):
-            distractor_pool.append((gap, -score, entity))
-    if not lure_pool or len(distractor_pool) < 2:
-        return None
-
-    lure_pool.sort(key=lambda item: (item[0], item[1], item[2].entity_id))
-    lure = lure_pool[0][2]
-    lure_flat_gap = lure_pool[0][0]
-    lure_wrap_gap = wrap_yaw_gap_deg(target, lure)
-
-    distractor_pool.sort(key=lambda item: (item[0], item[1], item[2].entity_id))
-    distractors = [lure] + [item[2] for item in distractor_pool[:2]]
-    option_entities = [correct] + distractors
-    option_texts = [entity_ref(entity) for entity in option_entities]
-    question = pick_template(
-        "seam_continuity_mc",
-        f"{scene.scene_id}:{target.entity_id}:{correct.entity_id}:{lure.entity_id}",
-    ).format(
-        target_ref=entity_ref(target),
-    )
-    choices, answer_key = shuffled_choice_rows(
-        option_texts,
-        entity_ref(correct),
-        f"seam_continuity_mc:{scene.scene_id}:{target.entity_id}:{correct.entity_id}:{lure.entity_id}",
-    )
-    return benchmark_item(
-        scene=scene,
-        task_id="seam_continuity_mc",
-        item_id=f"{scene.scene_id}_seam_continuity_mc_adjacency_{target.entity_id}_{correct.entity_id}",
-        question=question,
-        answer=answer_key,
-        answer_text=entity_ref(correct),
-        options=choices,
-        target_entities=[target.entity_id, correct.entity_id] + [entity.entity_id for entity in distractors],
-        metadata={
-            "seam_subtype": "hard_adjacency",
-            "target_ref": entity_ref(target),
-            "target_side": target_side,
-            "correct_ref": entity_ref(correct),
-            "correct_wrap_gap_deg": round(correct_gap, 2),
-            "correct_flat_x_gap_px": round(correct_flat_gap, 2),
-            "lure_ref": entity_ref(lure),
-            "lure_wrap_gap_deg": round(lure_wrap_gap, 2),
-            "lure_flat_x_gap_px": round(lure_flat_gap, 2),
-            "candidate_wrap_gaps_deg": {
-                entity.entity_id: round(wrap_yaw_gap_deg(target, entity), 2) for entity in option_entities
-            },
-        },
-        difficulty="hard",
-        quality_score=(quality + float(score_entity(correct, Counter(e.label for e in scene.entities), scene))) / 2.0,
-        diagnostic_slices=dedupe_keep_order(slices_for_entity(target) + slices_for_entity(correct) + ["seam"]),
-        requires_manual_review=True,
-        review_notes=[
-            "Verify that the correct candidate is the nearest wrap-around neighbor, appears far in the flat ERP rectangle, and that at least one distractor is a flat-image lure."
-        ],
     )
 
 

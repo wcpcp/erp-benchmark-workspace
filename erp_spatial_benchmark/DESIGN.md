@@ -201,8 +201,11 @@ before official release.
 
 Current default review tasks:
 
-- seam completion
-- seam adjacency
+- seam nearest neighbor
+- seam relative direction
+- seam dedup count
+- seam structure continuity
+- seam same-entity judgement
 - polar shape recovery
 - relative 3D position
 

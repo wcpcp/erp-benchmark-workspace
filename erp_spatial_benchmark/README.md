@@ -81,7 +81,7 @@ This group is intentionally stricter than the training pipeline:
 This group measures whether the model understands ERP as a representation, not
 just as another image.
 
-- `seam_continuity_mc`: hard seam-aware adjacency question where the correct neighbor lies across the ERP wrap-around boundary and at least one distractor is a flat-image lure
+- `seam_continuity_mc`: seam-aware diagnostic family with five subtypes: cross-boundary nearest neighbor, cross-boundary relative direction, seam dedup counting, structure continuity, and same-entity judgement
 - `polar_shape_recovery_mc`: high-latitude distortion should not change the inferred true shape
 
 Rotation consistency is **not** currently included as a scored core task in
