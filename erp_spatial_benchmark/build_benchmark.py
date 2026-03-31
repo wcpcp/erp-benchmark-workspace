@@ -166,6 +166,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-public-per-task", type=int, default=250, help="Target number of selected public benchmark items per task.")
     parser.add_argument("--max-per-scene-per-task", type=int, default=1, help="Maximum selected items from one scene for one task.")
     parser.add_argument("--seed", type=int, default=20260327, help="Random seed for deterministic splitting and selection.")
+    parser.add_argument(
+        "--fail-on-invalid-json",
+        action="store_true",
+        help="Fail immediately when a metadata.json file is empty or invalid. By default invalid files are skipped.",
+    )
     return parser.parse_args()
 
 
@@ -181,10 +186,23 @@ def main() -> int:
 
     all_candidates: List[Dict[str, Any]] = []
     scene_infos: Dict[str, SceneSideInfo] = {}
+    skipped_invalid_metadata: List[Dict[str, Any]] = []
     split_seed = int(args.seed)
 
     for idx, metadata_path in enumerate(scene_paths, start=1):
-        scene = load_scene_metadata(metadata_path)
+        try:
+            scene = load_scene_metadata(metadata_path)
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+            record = {
+                "path": str(metadata_path),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+            skipped_invalid_metadata.append(record)
+            print(json.dumps({"stage": "skip_invalid_metadata", **record}, ensure_ascii=False))
+            if args.fail_on_invalid_json:
+                raise
+            continue
         info = build_scene_side_info(scene, scene_manifest)
         scene_infos[scene.scene_id] = info
         candidates = generate_scene_candidates(scene)
@@ -210,6 +228,7 @@ def main() -> int:
     write_jsonl(output_dir / "benchmark_public.jsonl", public_selected)
     write_jsonl(output_dir / "benchmark_public_prompts.jsonl", [strip_answers(row) for row in public_selected])
     write_jsonl(output_dir / "benchmark_public_references.jsonl", public_selected)
+    write_jsonl(output_dir / "skipped_invalid_metadata.jsonl", skipped_invalid_metadata)
 
     summary = build_summary(
         scene_infos=scene_infos,
@@ -217,6 +236,7 @@ def main() -> int:
         public_selected=public_selected,
         review_queue=review_queue,
         target_public_per_task=int(args.target_public_per_task),
+        skipped_invalid_metadata=skipped_invalid_metadata,
     )
     (output_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"stage": "done", "output_dir": str(output_dir), "summary_path": str(output_dir / "summary.json")}, ensure_ascii=False))
@@ -258,7 +278,10 @@ def load_scene_manifest(path_str: str) -> Dict[str, SceneSideInfo]:
 
 
 def load_scene_metadata(path: Path) -> SceneMetadata:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    raw = path.read_text(encoding="utf-8")
+    if not raw.strip():
+        raise ValueError(f"Empty metadata file: {path}")
+    data = json.loads(raw)
     return SceneMetadata.from_dict(data)
 
 
@@ -1472,6 +1495,7 @@ def build_summary(
     public_selected: Sequence[Dict[str, Any]],
     review_queue: Sequence[Dict[str, Any]],
     target_public_per_task: int,
+    skipped_invalid_metadata: Sequence[Dict[str, Any]],
 ) -> Dict[str, Any]:
     def task_counter(rows: Sequence[Dict[str, Any]]) -> Dict[str, int]:
         counts = Counter(row["task_id"] for row in rows)
@@ -1501,12 +1525,14 @@ def build_summary(
         "ability_groups": sorted({spec["ability_group"] for spec in TASK_SPECS.values()}),
         "target_public_per_task": target_public_per_task,
         "num_scenes": len(scene_infos),
+        "skipped_invalid_metadata_count": len(skipped_invalid_metadata),
         "candidate_pool_size": len(all_candidates),
         "review_queue_size": len(review_queue),
         "benchmark_public_size": len(public_selected),
         "candidate_per_task": task_counter(all_candidates),
         "benchmark_public_per_task": task_counter(public_selected),
         "benchmark_public_per_group": group_counter(public_selected),
+        "skipped_invalid_metadata_examples": list(skipped_invalid_metadata[:10]),
         "scene_metadata_overview": dict(sorted(split_counts.items())),
         "leakage_controls": {
             "training_overlap_expected": "no_scene_overlap_by_construction",
