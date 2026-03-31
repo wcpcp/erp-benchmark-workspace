@@ -13,20 +13,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DATA_GEN_SRC = REPO_ROOT / "data_generation" / "src"
-if str(DATA_GEN_SRC) not in sys.path:
-    sys.path.insert(0, str(DATA_GEN_SRC))
-
-from erp_data_generation.entity_selector import (  # type: ignore
+from _vendor.entity_selector import (
     choose_relation_partners,
     infer_pole_proximity,
     infer_seam_adjacency,
     score_entity,
     select_anchor_entities,
 )
-from erp_data_generation.schemas import Entity, SceneMetadata  # type: ignore
+from _vendor.schemas import Entity, SceneMetadata
 
 
 ABSOLUTE_SECTORS_8 = [

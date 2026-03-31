@@ -277,8 +277,11 @@ python3 benchmark/erp_spatial_benchmark/rotation_protocol.py evaluate \
 
 ## Run
 
+Run from the repository root. The builder is self-contained inside this repo and
+does not require a sibling `data_generation/` checkout.
+
 ```bash
-python3 benchmark/erp_spatial_benchmark/build_benchmark.py \
+python3 erp_spatial_benchmark/build_benchmark.py \
   --input-root /path/to/erp_benchmark_metadata \
   --output-dir /path/to/erp_spatial_benchmark_out \
   --target-public-per-task 250 \
@@ -306,7 +309,7 @@ python3 benchmark/erp_spatial_benchmark/build_benchmark.py \
 With an optional manifest:
 
 ```bash
-python3 benchmark/erp_spatial_benchmark/build_benchmark.py \
+python3 erp_spatial_benchmark/build_benchmark.py \
   --input-root /path/to/erp_benchmark_metadata \
   --output-dir /path/to/erp_spatial_benchmark_out \
   --scene-manifest /path/to/scene_manifest.jsonl \
@@ -322,8 +325,8 @@ For quick local verification, you can point `--input-root` directly at one
 Example:
 
 ```bash
-python3 benchmark/erp_spatial_benchmark/build_benchmark.py \
-  --input-root /Users/wcp/code/erp_data_pipeline/data_generation/dataset/metadata.json \
+python3 erp_spatial_benchmark/build_benchmark.py \
+  --input-root /path/to/metadata.json \
   --output-dir /tmp/erp_benchmark_smoke \
   --seed 20260327
 ```

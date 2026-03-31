@@ -1,0 +1,1 @@
+"""Vendored minimal benchmark dependencies."""
