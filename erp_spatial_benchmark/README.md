@@ -132,6 +132,19 @@ ambiguous referring expressions. Current blocked anchor substrings include:
 
 These exclusions currently apply at anchor selection time only.
 
+To reduce semantic leakage in question text, benchmark prompts do not directly
+use rich captions or free-form regrounding phrases as public references. The
+builder instead uses a sanitized reference form:
+
+- coarse object label
+- plus one localization hint
+- localization is chosen deterministically per item between:
+  - normalized ERP box coordinates `[x1, y1, x2, y2]` in a `0-1000` scale
+  - or BFOV `[yaw, pitch, x_fov, y_fov]`
+
+This keeps the prompt informative enough to locate the target while avoiding
+easy leakage of shape, material, color, or other rich semantic attributes.
+
 ## Inputs
 
 The builder expects a directory tree containing many `metadata.json` files, for
