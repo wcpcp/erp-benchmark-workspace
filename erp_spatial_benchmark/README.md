@@ -117,6 +117,21 @@ To reduce same-distribution leakage, it applies these rules:
 - large or ambiguous cases are filtered more aggressively
 - fragile tasks are queued for manual review
 
+Anchor selection also applies a benchmark-specific exclusion list for very
+repetitive, low-distinctiveness categories that often generate poor-quality or
+ambiguous referring expressions. Current blocked anchor substrings include:
+
+- `tree`
+- `window`
+- `leaf`
+- `branch`
+- `foliage`
+- `bush`
+- `shrub`
+- `plant`
+
+These exclusions currently apply at anchor selection time only.
+
 ## Inputs
 
 The builder expects a directory tree containing many `metadata.json` files, for

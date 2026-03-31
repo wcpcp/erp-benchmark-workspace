@@ -64,6 +64,16 @@ MANUAL_REVIEW_TASKS = {
     "polar_shape_recovery_mc",
     "relative_3d_position_mc",
 }
+ANCHOR_LABEL_BLOCKLIST_SUBSTRINGS = (
+    "tree",
+    "window",
+    "leaf",
+    "branch",
+    "foliage",
+    "bush",
+    "shrub",
+    "plant",
+)
 
 TASK_SPECS: Dict[str, Dict[str, Any]] = {
     "referring_grounding_bfov": {
@@ -278,7 +288,7 @@ def build_scene_side_info(scene: SceneMetadata, manifest: Dict[str, SceneSideInf
 def generate_scene_candidates(scene: SceneMetadata) -> List[Dict[str, Any]]:
     candidates: List[Dict[str, Any]] = []
     label_counts = Counter(entity.label for entity in scene.entities)
-    anchors = [item for item in select_anchor_entities(scene, max_anchors=8) if benchmark_entity_eligible(item["entity"])]
+    anchors = [item for item in select_anchor_entities(scene, max_anchors=8) if benchmark_anchor_eligible(item["entity"])]
 
     used_item_ids: set[str] = set()
     for anchor_index, anchor_payload in enumerate(anchors):
@@ -327,6 +337,18 @@ def benchmark_entity_eligible(entity: Entity) -> bool:
     if float(entity.area_ratio or 0.0) <= 0.0004:
         return False
     return bool(entity.resolved_bfov)
+
+
+def benchmark_anchor_eligible(entity: Entity) -> bool:
+    if not benchmark_entity_eligible(entity):
+        return False
+    label = normalize_phrase(entity.label)
+    if any(token in label for token in ANCHOR_LABEL_BLOCKLIST_SUBSTRINGS):
+        return False
+    ref = normalize_phrase(entity_ref(entity))
+    if any(token in ref for token in ANCHOR_LABEL_BLOCKLIST_SUBSTRINGS):
+        return False
+    return True
 
 
 def entity_ref(entity: Entity) -> str:
