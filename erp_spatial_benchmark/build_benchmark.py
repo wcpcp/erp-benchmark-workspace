@@ -41,14 +41,25 @@ ABSOLUTE_SECTORS_8 = [
     "front-left",
 ]
 ABSOLUTE_DIRECTION_CHALLENGE_SECTORS = {
+    "right",
     "back-right",
     "back",
     "back-left",
+    "left",
 }
 ABSOLUTE_DIRECTION_CHALLENGE_CENTERS = {
+    "right": 90.0,
     "back-right": 135.0,
     "back": 180.0,
     "back-left": 225.0,
+    "left": 270.0,
+}
+ABSOLUTE_DIRECTION_PUBLIC_WEIGHTS = {
+    "right": 0.10,
+    "back-right": 0.2666666667,
+    "back": 0.2666666667,
+    "back-left": 0.2666666666,
+    "left": 0.10,
 }
 PANORAMIC_RELATION_LABELS = ["right", "back-right", "opposite", "back-left", "left"]
 REORIENTED_RELATION_LABELS = ["right", "back-right", "behind", "back-left", "left"]
@@ -1230,6 +1241,25 @@ def choose_yaw_shift_for_absolute_direction(entity: Entity) -> float:
     return wrapped_delta_deg(yaw - target_center)
 
 
+def choose_yaw_shift_for_absolute_direction_sector(entity: Entity, sector: str) -> float:
+    center = ABSOLUTE_DIRECTION_CHALLENGE_CENTERS[sector]
+    return wrapped_delta_deg(yaw_deg_360(entity) - center)
+
+
+def absolute_direction_target_counts(target_per_task: int) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    running_total = 0
+    ordered = list(ABSOLUTE_DIRECTION_PUBLIC_WEIGHTS.items())
+    for idx, (sector, weight) in enumerate(ordered):
+        if idx == len(ordered) - 1:
+            counts[sector] = max(0, target_per_task - running_total)
+        else:
+            value = int(round(target_per_task * weight))
+            counts[sector] = value
+            running_total += value
+    return counts
+
+
 def augment_representation_stress_candidates(
     scenes: Sequence[SceneMetadata],
     all_candidates: List[Dict[str, Any]],
@@ -1263,15 +1293,17 @@ def augment_representation_stress_candidates(
         )
         return True
 
-    absolute_needed = max(
-        0,
-        max(DERIVED_MIN_ABSOLUTE_DIRECTION_CANDIDATES, target_public_per_task)
-        - by_task.get("absolute_direction_mc", 0),
-    )
-    if absolute_needed > 0:
-        produced = 0
+    absolute_targets = absolute_direction_target_counts(max(DERIVED_MIN_ABSOLUTE_DIRECTION_CANDIDATES, target_public_per_task))
+    absolute_existing_rows = [row for row in all_candidates if row["task_id"] == "absolute_direction_mc"]
+    absolute_existing_by_sector = Counter((row.get("metadata") or {}).get("sector") for row in absolute_existing_rows)
+    absolute_needed_by_sector = {
+        sector: max(0, absolute_targets[sector] - absolute_existing_by_sector.get(sector, 0))
+        for sector in ABSOLUTE_DIRECTION_CHALLENGE_SECTORS
+    }
+    if any(value > 0 for value in absolute_needed_by_sector.values()):
+        produced_by_sector: Counter[str] = Counter()
         for scene in scenes:
-            if produced >= absolute_needed:
+            if not any(absolute_needed_by_sector[sector] > produced_by_sector[sector] for sector in ABSOLUTE_DIRECTION_CHALLENGE_SECTORS):
                 break
             produced_for_scene = 0
             used_target_ids: set[str] = set()
@@ -1284,25 +1316,37 @@ def augment_representation_stress_candidates(
                 and direction_task_entity_eligible(item["entity"])
             ]
             for anchor_payload in anchors:
-                if produced >= absolute_needed or produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
+                if produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
                     break
                 target = anchor_payload["entity"]
                 if target.entity_id in used_target_ids:
                     continue
-                shift = choose_yaw_shift_for_absolute_direction(target)
-                suffix = f"absolute_yaw_{int(round(shift))}_{target.entity_id}"
-                derived_scene = build_rotated_scene(scene, yaw_shift_deg=shift, suffix=suffix, output_dir=output_dir)
-                if derived_scene is None:
-                    continue
-                derived_target = find_entity(derived_scene, target.entity_id)
-                if derived_target is None:
-                    continue
-                quality = float(score_entity(derived_target, Counter(e.label for e in derived_scene.entities), derived_scene))
-                row = build_absolute_direction_mc(derived_scene, derived_target, 0, quality)
-                if add_row(row, derived_scene, info):
-                    produced += 1
-                    used_target_ids.add(target.entity_id)
-                    produced_for_scene += 1
+                for sector in sorted(
+                    ABSOLUTE_DIRECTION_CHALLENGE_SECTORS,
+                    key=lambda item: (
+                        -(absolute_needed_by_sector[item] - produced_by_sector[item]),
+                        abs(wrapped_delta_deg(yaw_deg_360(target) - ABSOLUTE_DIRECTION_CHALLENGE_CENTERS[item])),
+                    ),
+                ):
+                    if produced_by_sector[sector] >= absolute_needed_by_sector[sector]:
+                        continue
+                    shift = choose_yaw_shift_for_absolute_direction_sector(target, sector)
+                    suffix = f"absolute_{sector}_yaw_{int(round(shift))}_{target.entity_id}"
+                    derived_scene = build_rotated_scene(scene, yaw_shift_deg=shift, suffix=suffix, output_dir=output_dir)
+                    if derived_scene is None:
+                        continue
+                    derived_target = find_entity(derived_scene, target.entity_id)
+                    if derived_target is None:
+                        continue
+                    quality = float(score_entity(derived_target, Counter(e.label for e in derived_scene.entities), derived_scene))
+                    row = build_absolute_direction_mc(derived_scene, derived_target, 0, quality)
+                    if row and (row.get("metadata") or {}).get("sector") != sector:
+                        continue
+                    if add_row(row, derived_scene, info):
+                        produced_by_sector[sector] += 1
+                        used_target_ids.add(target.entity_id)
+                        produced_for_scene += 1
+                        break
 
     seam_needed = max(0, max(DERIVED_MIN_SEAM_CANDIDATES, target_public_per_task) - by_task.get("seam_continuity_mc", 0))
     if seam_needed > 0:
@@ -2186,6 +2230,38 @@ def select_split_pool(candidates: Sequence[Dict[str, Any]], target_per_task: int
                     stable_hash(f"{seed}:{row['item_id']}"),
                 )
             )
+        if task_id == "absolute_direction_mc":
+            quota_by_sector = absolute_direction_target_counts(target_per_task)
+            rows_by_sector: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            for row in rows:
+                sector = str((row.get("metadata") or {}).get("sector", ""))
+                rows_by_sector[sector].append(row)
+
+            per_scene_counter: Counter[str] = Counter()
+            kept = 0
+            kept_by_sector: Counter[str] = Counter()
+            for sector in ["back-right", "back", "back-left", "left", "right"]:
+                for row in rows_by_sector.get(sector, []):
+                    if kept >= target_per_task or kept_by_sector[sector] >= quota_by_sector.get(sector, 0):
+                        break
+                    if per_scene_counter[row["scene_id"]] >= max_per_scene_per_task:
+                        continue
+                    selected.append(row)
+                    per_scene_counter[row["scene_id"]] += 1
+                    kept += 1
+                    kept_by_sector[sector] += 1
+            if kept < target_per_task:
+                for row in rows:
+                    if kept >= target_per_task:
+                        break
+                    if row in selected:
+                        continue
+                    if per_scene_counter[row["scene_id"]] >= max_per_scene_per_task:
+                        continue
+                    selected.append(row)
+                    per_scene_counter[row["scene_id"]] += 1
+                    kept += 1
+            continue
         per_scene_counter: Counter[str] = Counter()
         kept = 0
         for row in rows:

@@ -167,10 +167,12 @@ aggressively.
 For `absolute_direction_mc`, we now intentionally prefer panorama-native
 challenge cases instead of perspective-like easy cases:
 
-- only rear-half sectors are kept as correct answers:
+- the public benchmark target mix is:
+  - about `10%` `right`
   - `back-right`
   - `back`
   - `back-left`
+- about `10%` `left`
 - the effective sector margin must be at least `15°`
 - immediate neighboring distractors such as `left` versus `front-left` are no
   longer used
@@ -178,8 +180,8 @@ challenge cases instead of perspective-like easy cases:
   true 360-degree orientation understanding rather than simple image-left /
   image-right heuristics
 - if natural candidates are insufficient, the builder may synthesize additional
-  absolute-direction stress items by yaw-rotating high-quality targets into one
-  of the rear challenge sectors
+  absolute-direction stress items by yaw-rotating high-quality targets into
+  this target sector mix
 
 When a scene contains multiple similar instances of the same category, the
 builder now disambiguates only when needed:
@@ -291,14 +293,17 @@ These rules apply broadly across the benchmark before task-specific logic runs.
 #### `absolute_direction_mc`
 
 - Target must pass the shared direction-task size filter.
-- Only `back-right`, `back`, and `back-left` are kept as valid correct sectors.
+- The target sector mix is approximately:
+  - `10%` `right`
+  - `80%` distributed across `back-right`, `back`, and `back-left`
+  - `10%` `left`
 - The effective sector margin must be at least `15°` after accounting for the
   target BFOV width.
 - Immediate neighboring sectors are excluded from distractors so linguistically
   plausible but low-value alternatives such as `left` versus `front-left` do
   not appear together.
 - If the natural candidate pool is underfilled, derived yaw rotations are used
-  to supplement rear-sector challenge cases.
+  to supplement this target sector mix.
 
 #### `relative_direction_mc`
 
