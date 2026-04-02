@@ -490,8 +490,12 @@ For derived scenes, geometry-bearing metadata such as `lon_lat`, `bfov`,
 `entity_bfov`, `bbox_erp`, `entity_xyz_camera`, and `spatial.xyz_camera_m` are
 rewritten into the rotated camera frame; `bbox_erp` is re-estimated from
 sampled box points after spherical reprojection rather than by simple center
-translation. `summary.json` now reports every benchmark task explicitly,
-including tasks whose current candidate count is `0`.
+translation. Derived metadata also preserves explicit `erp_width` /
+`erp_height`, so seam checks and normalized `0-1000` boxes remain valid after
+rotation. `summary.json` now reports every benchmark task explicitly,
+including tasks whose current candidate count is `0`, and separates original
+scene count (`num_scenes`) from the number of generated derived scenes
+(`derived_scene_count`).
 
 ## How scoring works
 

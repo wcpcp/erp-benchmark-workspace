@@ -381,6 +381,7 @@ def main() -> int:
         review_queue=review_queue,
         target_public_per_task=int(args.target_public_per_task),
         skipped_invalid_metadata=skipped_invalid_metadata,
+        num_input_scenes=len(scenes),
     )
     (output_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"stage": "done", "output_dir": str(output_dir), "summary_path": str(output_dir / "summary.json")}, ensure_ascii=False))
@@ -1271,6 +1272,8 @@ def build_rotated_scene(
 ) -> Optional[SceneMetadata]:
     raw = copy.deepcopy(scene.raw)
     raw["scene_id"] = f"{scene.scene_id}__{suffix}"
+    raw["erp_width"] = int(scene.erp_width or 0)
+    raw["erp_height"] = int(scene.erp_height or 0)
     rotated_image = derived_image_path(scene, suffix)
     if not Path(scene.erp_image_path).exists():
         return None
@@ -2438,6 +2441,7 @@ def build_summary(
     review_queue: Sequence[Dict[str, Any]],
     target_public_per_task: int,
     skipped_invalid_metadata: Sequence[Dict[str, Any]],
+    num_input_scenes: int,
 ) -> Dict[str, Any]:
     def task_counter(rows: Sequence[Dict[str, Any]]) -> Dict[str, int]:
         counts = Counter(row["task_id"] for row in rows)
@@ -2449,6 +2453,11 @@ def build_summary(
 
     derived_rows = [row for row in all_candidates if "derived_rotation" in (row.get("metadata") or {})]
     natural_rows = [row for row in all_candidates if "derived_rotation" not in (row.get("metadata") or {})]
+    derived_scene_ids = {
+        str(row["metadata"]["derived_rotation"]["derived_scene_id"])
+        for row in derived_rows
+        if "derived_rotation" in (row.get("metadata") or {})
+    }
 
     split_counts = Counter()
     for info in scene_infos.values():
@@ -2469,7 +2478,8 @@ def build_summary(
         },
         "ability_groups": sorted({spec["ability_group"] for spec in TASK_SPECS.values()}),
         "target_public_per_task": target_public_per_task,
-        "num_scenes": len(scene_infos),
+        "num_scenes": num_input_scenes,
+        "derived_scene_count": len(derived_scene_ids),
         "skipped_invalid_metadata_count": len(skipped_invalid_metadata),
         "derived_rotation_count": len(derived_rows),
         "candidate_pool_size": len(all_candidates),
