@@ -1047,8 +1047,16 @@ def yaw_to_erp_x(yaw_deg: float, width: int) -> float:
     return (((float(yaw_deg) + 180.0) % 360.0) / 360.0) * float(width)
 
 
+def erp_x_to_yaw(x_px: float, width: int) -> float:
+    return yaw360_to_signed(((float(x_px) / float(width)) * 360.0) - 180.0)
+
+
 def pitch_to_erp_y(pitch_deg: float, height: int) -> float:
     return ((90.0 - float(pitch_deg)) / 180.0) * float(height)
+
+
+def erp_y_to_pitch(y_px: float, height: int) -> float:
+    return 90.0 - ((float(y_px) / float(height)) * 180.0)
 
 
 def spherical_vector_from_yaw_pitch(yaw_deg: float, pitch_deg: float) -> np.ndarray:
@@ -1163,24 +1171,57 @@ def write_pitch_rotated_erp_image(src_path: Path, dst_path: Path, pitch_shift_de
     Image.fromarray(rotated).save(dst_path)
 
 
-def transformed_bbox(entity: Entity, scene: SceneMetadata, yaw_deg: float, pitch_deg: float) -> Tuple[List[float], bool]:
+def transformed_bbox(entity: Entity, scene: SceneMetadata, *, yaw_shift_deg: float = 0.0, pitch_shift_deg: float = 0.0) -> Tuple[List[float], bool]:
     width = int(scene.erp_width or 0)
     height = int(scene.erp_height or 0)
-    if width <= 0 or height <= 0:
+    if width <= 0 or height <= 0 or len(entity.bbox_erp) != 4:
         return list(entity.bbox_erp), False
-    box_w, box_h = bbox_dims(entity)
-    cx = yaw_to_erp_x(yaw_deg, width)
-    cy = pitch_to_erp_y(pitch_deg, height)
-    x1 = cx - box_w / 2.0
-    x2 = cx + box_w / 2.0
-    y1 = max(0.0, cy - box_h / 2.0)
-    y2 = min(float(height), cy + box_h / 2.0)
-    seam_cross = x1 < 0.0 or x2 > float(width)
+    x1, y1, x2, y2 = [float(v) for v in entity.bbox_erp]
+    xs = np.linspace(x1, x2, num=5)
+    ys = np.linspace(y1, y2, num=5)
+    sample_points = [(sx, sy) for sx in xs for sy in ys]
+
+    rotated_xs: List[float] = []
+    rotated_ys: List[float] = []
+    for sx, sy in sample_points:
+        yaw_old = erp_x_to_yaw(sx, width)
+        pitch_old = erp_y_to_pitch(sy, height)
+        yaw_new, pitch_new = rotate_yaw_pitch(
+            yaw_old,
+            pitch_old,
+            yaw_shift_deg=yaw_shift_deg,
+            pitch_shift_deg=pitch_shift_deg,
+        )
+        rotated_xs.append(yaw_to_erp_x(yaw_new, width) % float(width))
+        rotated_ys.append(min(float(height), max(0.0, pitch_to_erp_y(pitch_new, height))))
+
+    if not rotated_xs or not rotated_ys:
+        return list(entity.bbox_erp), False
+
+    rotated_xs.sort()
+    largest_gap = -1.0
+    largest_gap_index = 0
+    for idx in range(len(rotated_xs)):
+        current = rotated_xs[idx]
+        nxt = rotated_xs[(idx + 1) % len(rotated_xs)]
+        gap = (nxt - current) if idx + 1 < len(rotated_xs) else (nxt + float(width) - current)
+        if gap > largest_gap:
+            largest_gap = gap
+            largest_gap_index = idx
+
+    start = rotated_xs[(largest_gap_index + 1) % len(rotated_xs)]
+    end = rotated_xs[largest_gap_index]
+    seam_cross = start > end
+    y_min = min(rotated_ys)
+    y_max = max(rotated_ys)
+
     if seam_cross:
-        if x1 < 0.0:
-            return [0.0, y1, min(float(width), x2), y2], True
-        return [max(0.0, x1), y1, float(width), y2], True
-    return [max(0.0, x1), y1, min(float(width), x2), y2], False
+        left_span = end
+        right_span = float(width) - start
+        if right_span >= left_span:
+            return [start, y_min, float(width), y_max], True
+        return [0.0, y_min, end, y_max], True
+    return [start, y_min, end, y_max], False
 
 
 def bfov_extents_from_item(item: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
@@ -1264,7 +1305,12 @@ def build_rotated_scene(
             item["entity_bfov"] = [yaw_new, pitch_new, x_fov_deg, y_fov_deg]
         else:
             item.pop("entity_bfov", None)
-        bbox, seam_cross = transformed_bbox(Entity.from_dict(item), scene, yaw_new % 360.0, pitch_new)
+        bbox, seam_cross = transformed_bbox(
+            Entity.from_dict(entity),
+            scene,
+            yaw_shift_deg=yaw_shift_deg,
+            pitch_shift_deg=pitch_shift_deg,
+        )
         item["bbox_erp"] = bbox
         item["seam_crossing_flag"] = bool(seam_cross)
         item["pole_proximity_flag"] = abs(lat_new) >= 60.0

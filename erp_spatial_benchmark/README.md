@@ -481,6 +481,11 @@ The rotated ERP image is written next to the original image file, while the
 corresponding transformed metadata is exported under `derived_metadata/` in the
 benchmark output directory. Derived items are tagged with the
 `derived_rotation` diagnostic slice and retain a pointer to the source scene.
+For derived scenes, geometry-bearing metadata such as `lon_lat`, `bfov`,
+`entity_bfov`, `bbox_erp`, `entity_xyz_camera`, and `spatial.xyz_camera_m` are
+rewritten into the rotated camera frame; `bbox_erp` is re-estimated from
+sampled box points after spherical reprojection rather than by simple center
+translation.
 
 ## How scoring works
 
