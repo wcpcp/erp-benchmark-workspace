@@ -98,9 +98,27 @@ DIRECTION_MAX_AREA_RATIO = 0.08
 DERIVED_MIN_SEAM_CANDIDATES = 40
 DERIVED_MIN_POLAR_CANDIDATES = 40
 DERIVED_ROTATION_DIRNAME = "derived_rotations"
+DERIVED_MAX_PER_SCENE_PER_TASK = 3
 POLAR_TARGET_LAT_MIN_DEG = 50.0
 POLAR_TARGET_LAT_MAX_DEG = 70.0
 POLAR_TARGET_LAT_CENTER_DEG = 60.0
+RELATIVE_3D_MAX_X_FOV_DEG = 35.0
+RELATIVE_3D_MAX_Y_FOV_DEG = 35.0
+RELATIVE_3D_MAX_FOV_AREA = 1200.0
+RELATIVE_3D_BLOCKLIST_SUBSTRINGS = (
+    "building",
+    "wall",
+    "ceiling",
+    "roof",
+    "floor",
+    "ground",
+    "road",
+    "sidewalk",
+    "facade",
+    "fence",
+    "railing",
+    "gate",
+)
 
 TASK_SPECS: Dict[str, Dict[str, Any]] = {
     "referring_grounding_bfov": {
@@ -486,11 +504,26 @@ def coarse_sector_hint(entity: Entity) -> str:
 
 def contextual_entity_ref(scene: SceneMetadata, entity: Entity) -> str:
     ref = descriptive_entity_ref(entity)
-    if duplicate_label_count(scene, entity) <= 1:
+    dup_count = duplicate_label_count(scene, entity)
+    if dup_count <= 1:
         return ref
+    side_hint = f"near the {coarse_sector_hint(entity)}"
+    if dup_count == 2:
+        if ref_has_spatial_hint(ref):
+            return ref
+        return f"{ref} {side_hint}"
+
+    # For heavier duplicate cases, keep the natural phrase but attach a compact
+    # localization cue so the target can still be uniquely identified.
     if ref_has_spatial_hint(ref):
-        return ref
-    return f"{ref} near the {coarse_sector_hint(entity)}"
+        base = ref
+    else:
+        base = f"{ref} {side_hint}"
+    localizer = safe_entity_ref(entity, scene, f"duplicate:{scene.scene_id}:{entity.entity_id}")
+    prefix = f"the {normalize_phrase(entity.label) or 'object'} "
+    if localizer.startswith(prefix):
+        localizer = localizer[len(prefix):]
+    return f"{base} ({localizer})"
 
 
 def normalized_bbox_1000(entity: Entity, scene: SceneMetadata) -> Optional[Tuple[int, int, int, int]]:
@@ -675,7 +708,14 @@ def compact_for_relative_3d(entity: Entity) -> bool:
         return False
     x_fov = abs(float(bfov[2]))
     y_fov = abs(float(bfov[3]))
-    return x_fov <= 45.0 and y_fov <= 45.0 and (x_fov * y_fov) <= 1800.0
+    label = normalize_phrase(entity.label)
+    if any(token in label for token in RELATIVE_3D_BLOCKLIST_SUBSTRINGS):
+        return False
+    return (
+        x_fov <= RELATIVE_3D_MAX_X_FOV_DEG
+        and y_fov <= RELATIVE_3D_MAX_Y_FOV_DEG
+        and (x_fov * y_fov) <= RELATIVE_3D_MAX_FOV_AREA
+    )
 
 
 def approx_axis_radius(entity: Entity, axis: str) -> float:
@@ -1103,12 +1143,15 @@ def augment_representation_stress_candidates(
             if produced >= seam_needed:
                 break
             produced_for_scene = 0
+            used_target_ids: set[str] = set()
             info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
             anchors = [item for item in select_anchor_entities(scene, max_anchors=8) if benchmark_anchor_eligible(item["entity"])]
             for anchor_payload in anchors:
-                if produced >= seam_needed or produced_for_scene >= 1:
+                if produced >= seam_needed or produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
                     break
                 target = anchor_payload["entity"]
+                if target.entity_id in used_target_ids:
+                    continue
                 shift = wrapped_delta_deg(yaw_deg_360(target) - 358.0)
                 suffix = f"seam_yaw_{int(round(shift))}_{target.entity_id}"
                 derived_scene = build_rotated_scene(scene, yaw_shift_deg=shift, suffix=suffix, output_dir=output_dir)
@@ -1121,9 +1164,9 @@ def augment_representation_stress_candidates(
                 for row in build_seam_continuity_items(derived_scene, derived_target, [], 0, quality):
                     if add_row(row, derived_scene, info):
                         produced += 1
-                        produced_for_scene += 1
-                        if produced >= seam_needed or produced_for_scene >= 1:
-                            break
+                        used_target_ids.add(target.entity_id)
+                if target.entity_id in used_target_ids:
+                    produced_for_scene += 1
 
     polar_needed = max(0, max(DERIVED_MIN_POLAR_CANDIDATES, target_public_per_task) - by_task.get("polar_shape_recovery_mc", 0))
     if polar_needed > 0:
@@ -1132,12 +1175,15 @@ def augment_representation_stress_candidates(
             if produced >= polar_needed:
                 break
             produced_for_scene = 0
+            used_target_ids: set[str] = set()
             info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
             anchors = [item for item in select_anchor_entities(scene, max_anchors=8) if benchmark_anchor_eligible(item["entity"])]
             for anchor_payload in anchors:
-                if produced >= polar_needed or produced_for_scene >= 1:
+                if produced >= polar_needed or produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
                     break
                 target = anchor_payload["entity"]
+                if target.entity_id in used_target_ids:
+                    continue
                 if shape_value(target) is None:
                     continue
                 shift = choose_pitch_shift_for_polar(target)
@@ -1154,6 +1200,7 @@ def augment_representation_stress_candidates(
                 row = build_polar_shape_recovery(derived_scene, derived_target, 0, quality)
                 if add_row(row, derived_scene, info):
                     produced += 1
+                    used_target_ids.add(target.entity_id)
                     produced_for_scene += 1
 
     return derived_rows

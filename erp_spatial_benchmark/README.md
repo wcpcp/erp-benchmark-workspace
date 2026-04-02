@@ -165,8 +165,12 @@ so boundary cases such as `right` vs `back-right` are filtered more
 aggressively.
 
 When a scene contains multiple similar instances of the same category, the
-builder now adds a light natural disambiguation cue only when needed, for
-example by appending a coarse side hint such as `near the right side`.
+builder now disambiguates only when needed:
+
+- for mild duplicate cases, it adds a light natural cue such as `near the right side`
+- for heavier duplicate cases, it preserves the natural phrase but also appends
+  a compact localization cue derived from normalized box coordinates or BFOV
+
 This is only used for duplicate-heavy cases; it is not added to every item.
 
 For most tasks, benchmark prompts continue to use entity-level referring
@@ -229,10 +233,10 @@ creates derived stress samples:
   high latitude
 
 To keep the derived set from becoming too synthetic, the current builder uses
-at most one derived seam item and at most one derived polar item per source
-scene. Polar targeting is also intentionally conservative: it aims to move the
-target into a roughly `50°-70°` latitude band, using candidate pitch rotations
-around `40°-50°` instead of more extreme large-angle shifts.
+multiple derived seam/polar items only when they come from different target
+entities. Polar targeting is also intentionally conservative: it aims to move
+the target into a roughly `50°-70°` latitude band, using candidate pitch
+rotations around `40°-50°` instead of more extreme large-angle shifts.
 
 The rotated ERP image is written next to the original image file, while the
 corresponding transformed metadata is exported under `derived_metadata/` in the
