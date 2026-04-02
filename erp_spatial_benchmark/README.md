@@ -164,6 +164,20 @@ before. The effective margin is now measured after accounting for target BFOV,
 so boundary cases such as `right` vs `back-right` are filtered more
 aggressively.
 
+For `absolute_direction_mc`, we now intentionally prefer panorama-native
+challenge cases instead of perspective-like easy cases:
+
+- only rear-half sectors are kept as correct answers:
+  - `back-right`
+  - `back`
+  - `back-left`
+- the effective sector margin must be at least `20°`
+- immediate neighboring distractors such as `left` versus `front-left` are no
+  longer used
+- distractors are drawn from more clearly separated sectors so the task tests
+  true 360-degree orientation understanding rather than simple image-left /
+  image-right heuristics
+
 When a scene contains multiple similar instances of the same category, the
 builder now disambiguates only when needed:
 
@@ -274,9 +288,12 @@ These rules apply broadly across the benchmark before task-specific logic runs.
 #### `absolute_direction_mc`
 
 - Target must pass the shared direction-task size filter.
-- The effective sector margin must be at least `15°` after accounting for the
+- Only `back-right`, `back`, and `back-left` are kept as valid correct sectors.
+- The effective sector margin must be at least `20°` after accounting for the
   target BFOV width.
-- This is designed to remove cases where adjacent sectors are both plausible.
+- Immediate neighboring sectors are excluded from distractors so linguistically
+  plausible but low-value alternatives such as `left` versus `front-left` do
+  not appear together.
 
 #### `relative_direction_mc`
 

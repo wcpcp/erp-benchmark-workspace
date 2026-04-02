@@ -40,6 +40,11 @@ ABSOLUTE_SECTORS_8 = [
     "left",
     "front-left",
 ]
+ABSOLUTE_DIRECTION_CHALLENGE_SECTORS = {
+    "back-right",
+    "back",
+    "back-left",
+}
 PANORAMIC_RELATION_LABELS = ["right", "back-right", "opposite", "back-left", "left"]
 REORIENTED_RELATION_LABELS = ["right", "back-right", "behind", "back-left", "left"]
 SHAPE_FALLBACK_POOL = [
@@ -90,7 +95,7 @@ ENTITY_LABEL_BLOCKLIST_SUBSTRINGS = (
 )
 MIN_DETECTION_SCORE = 0.65
 MIN_REGROUND_SCORE = 0.65
-ABSOLUTE_DIRECTION_MIN_MARGIN_DEG = 15.0
+ABSOLUTE_DIRECTION_MIN_MARGIN_DEG = 20.0
 RELATION_MIN_MARGIN_DEG = 15.0
 DIRECTION_MAX_X_FOV_DEG = 35.0
 DIRECTION_MAX_Y_FOV_DEG = 30.0
@@ -1351,6 +1356,8 @@ def build_absolute_direction_mc(scene: SceneMetadata, target: Entity, anchor_ind
     if not reference_is_resolvable(scene, target):
         return None
     sector = absolute_sector_8way(target)
+    if sector not in ABSOLUTE_DIRECTION_CHALLENGE_SECTORS:
+        return None
     margin = effective_direction_margin(target, absolute_sector_margin(target))
     if margin < ABSOLUTE_DIRECTION_MIN_MARGIN_DEG:
         return None
@@ -1382,7 +1389,16 @@ def build_absolute_direction_mc(scene: SceneMetadata, target: Entity, anchor_ind
 
 def sector_distractors(correct: str) -> List[str]:
     idx = ABSOLUTE_SECTORS_8.index(correct)
-    order = [ABSOLUTE_SECTORS_8[(idx - 1) % 8], ABSOLUTE_SECTORS_8[(idx + 1) % 8], ABSOLUTE_SECTORS_8[(idx + 4) % 8], ABSOLUTE_SECTORS_8[(idx + 2) % 8]]
+    # For absolute-direction benchmark items we avoid nearest-neighbor sectors,
+    # because labels such as "left" vs "front-left" remain linguistically
+    # plausible even when the target is filtered away from the exact boundary.
+    # We instead prefer sectors that are clearly separated in panoramic angle.
+    order = [
+        ABSOLUTE_SECTORS_8[(idx + 4) % 8],
+        ABSOLUTE_SECTORS_8[(idx + 2) % 8],
+        ABSOLUTE_SECTORS_8[(idx - 2) % 8],
+        ABSOLUTE_SECTORS_8[(idx + 3) % 8],
+    ]
     return dedupe_keep_order(order)
 
 
