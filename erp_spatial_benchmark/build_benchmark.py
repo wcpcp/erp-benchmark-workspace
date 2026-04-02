@@ -2308,6 +2308,7 @@ def build_summary(
         return dict(sorted(counts.items()))
 
     derived_rows = [row for row in all_candidates if "derived_rotation" in (row.get("metadata") or {})]
+    natural_rows = [row for row in all_candidates if "derived_rotation" not in (row.get("metadata") or {})]
 
     split_counts = Counter()
     for info in scene_infos.values():
@@ -2334,6 +2335,8 @@ def build_summary(
         "candidate_pool_size": len(all_candidates),
         "review_queue_size": len(review_queue),
         "benchmark_public_size": len(public_selected),
+        "natural_candidate_per_task": task_counter(natural_rows),
+        "derived_candidate_per_task": task_counter(derived_rows),
         "candidate_per_task": task_counter(all_candidates),
         "benchmark_public_per_task": task_counter(public_selected),
         "benchmark_public_per_group": group_counter(public_selected),
