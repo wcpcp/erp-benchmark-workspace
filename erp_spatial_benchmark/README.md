@@ -96,7 +96,7 @@ Current seam subtypes and question templates:
   - `For the {target_ref} touching both image sides, which explanation is more reasonable?`
   - This subtype is only built for structure-like categories such as walls, tabletops/counters, roads/floors, ceiling lines, and railings.
 - `same_entity_judgement`
-  - `The left-edge and right-edge appearances of {target_ref} are best described as:`
+  - `In the 360 scene, the left-edge and right-edge appearances of {target_ref} are best described as:`
 
 Rotation consistency is **not** currently included as a scored core task in
 this v1 benchmark release.

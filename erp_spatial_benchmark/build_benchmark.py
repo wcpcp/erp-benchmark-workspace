@@ -1636,10 +1636,10 @@ SEAM_STRUCTURE_OPTIONS = [
     "cannot determine",
 ]
 SEAM_SAME_ENTITY_OPTIONS = [
-    "same object at different image positions",
-    "same object at the same image position",
-    "different objects at different image positions",
-    "different objects at the same image position",
+    "same object at the same place in the 360 scene",
+    "same object at different places in the 360 scene",
+    "different objects at the same place in the 360 scene",
+    "different objects at different places in the 360 scene",
 ]
 STRUCTURAL_LABEL_HINTS = {
     "wall",
@@ -1686,7 +1686,7 @@ SEAM_SUBTYPE_TEMPLATES: Dict[str, List[str]] = {
         "For the {target_ref} touching both image sides, which explanation is more reasonable?",
     ],
     "same_entity_judgement": [
-        "The left-edge and right-edge appearances of {target_ref} are best described as:",
+        "In the 360 scene, the left-edge and right-edge appearances of {target_ref} are best described as:",
     ],
 }
 
@@ -1968,7 +1968,7 @@ def build_seam_same_entity_mc(scene: SceneMetadata, target: Entity, quality: flo
         target_ref=target_ref,
     )
     choices = choice_rows(SEAM_SAME_ENTITY_OPTIONS)
-    answer_text = "same object at different image positions"
+    answer_text = "same object at the same place in the 360 scene"
     return benchmark_item(
         scene=scene,
         task_id="seam_continuity_mc",
