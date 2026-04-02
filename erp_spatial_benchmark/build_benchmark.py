@@ -1053,11 +1053,14 @@ def erp_x_to_yaw(x_px: float, width: int) -> float:
 
 
 def pitch_to_erp_y(pitch_deg: float, height: int) -> float:
-    return ((90.0 - float(pitch_deg)) / 180.0) * float(height)
+    # Benchmark convention: pitch=0 is horizon center, negative pitch is upward,
+    # positive pitch is downward. Therefore top-of-image is pitch=-90 and bottom
+    # is pitch=+90.
+    return (((float(pitch_deg) + 90.0) / 180.0)) * float(height)
 
 
 def erp_y_to_pitch(y_px: float, height: int) -> float:
-    return 90.0 - ((float(y_px) / float(height)) * 180.0)
+    return ((float(y_px) / float(height)) * 180.0) - 90.0
 
 
 def spherical_vector_from_yaw_pitch(yaw_deg: float, pitch_deg: float) -> np.ndarray:
