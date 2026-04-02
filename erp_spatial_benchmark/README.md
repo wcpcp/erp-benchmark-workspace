@@ -192,6 +192,181 @@ This keeps the polar prompts informative enough to locate the target while
 avoiding easy leakage of shape, material, color, or other rich semantic
 attributes.
 
+## High-Quality Filtering Strategy
+
+This benchmark is intentionally quality-first rather than quantity-first. The
+builder does not force every task to reach its nominal target count. Instead,
+it first constructs a candidate pool under aggressive filtering, and only then
+selects the final public benchmark from the surviving candidates.
+
+### Shared filtering rules
+
+These rules apply broadly across the benchmark before task-specific logic runs.
+
+- **Metadata validity**
+  - Empty or invalid `metadata.json` files are skipped and logged to
+    `skipped_invalid_metadata.jsonl`.
+- **Entity reliability**
+  - `best_score >= 0.65`
+  - `local_reground.pred_score >= 0.65`
+  - valid BFOV must exist
+  - area must be non-trivial
+- **Low-value semantic category filtering**
+  - Anchor-level blocked substrings:
+    - `tree`
+    - `window`
+    - `leaf`
+    - `branch`
+    - `foliage`
+    - `bush`
+    - `shrub`
+    - `plant`
+  - Broader entity-level blocked substrings:
+    - `tree`
+    - `window`
+    - `leaf`
+    - `branch`
+    - `foliage`
+    - `bush`
+    - `shrub`
+    - `plant`
+    - `grass`
+    - `sky`
+    - `cloud`
+- **Duplicate-instance disambiguation**
+  - If a scene contains multiple instances of the same label:
+    - mild duplicate cases receive a natural side cue such as
+      `near the right side`
+    - heavier duplicate cases additionally append a compact locator derived
+      from normalized box coordinates or BFOV
+  - This is only applied when needed; references are not made artificially
+    verbose for every item.
+- **Direction-task large-object filtering**
+  - For direction-sensitive tasks
+    (`absolute_direction_mc`, `relative_direction_mc`,
+    `camera_rotation_transform_mc`, `object_conditioned_reorientation_mc`):
+    - `x_fov <= 35°`
+    - `y_fov <= 30°`
+    - `area_ratio <= 0.08`
+- **Boundary ambiguity suppression**
+  - Directional tasks use BFOV-aware effective angular margins so that targets
+    near sector boundaries such as `right` vs `back-right` are dropped instead
+    of kept as ambiguous items.
+- **Manual review routing**
+  - Fragile tasks are exported to `review_queue.jsonl` for additional checking:
+    - `relative_3d_position_mc`
+    - `seam_continuity_mc`
+    - `polar_shape_recovery_mc`
+
+### Task-specific filtering rules
+
+#### `referring_grounding_bfov`
+
+- Requires a valid target BFOV.
+- No large additional task-specific semantic filtering beyond the shared
+  entity-quality checks.
+
+#### `absolute_direction_mc`
+
+- Target must pass the shared direction-task size filter.
+- The effective sector margin must be at least `15°` after accounting for the
+  target BFOV width.
+- This is designed to remove cases where adjacent sectors are both plausible.
+
+#### `relative_direction_mc`
+
+- Both target and reference must pass the shared direction-task size filter.
+- `abs(delta_yaw)` must be large enough to define a clear relation.
+- Effective margin to relation boundaries must be at least `15°` after BFOV
+  clearance using the larger target/reference horizontal extent.
+
+#### `camera_rotation_transform_mc`
+
+- Target must pass the shared direction-task size filter.
+- After applying the observer turn, the target must still land in a stable
+  relation bin.
+- Effective post-rotation margin must be at least `15°`.
+
+#### `object_conditioned_reorientation_mc`
+
+- Both the facing object and the target must pass the shared direction-task
+  size filter.
+- The reoriented relation must remain stable after BFOV-aware clearance.
+- Effective margin must be at least `15°`.
+
+#### `observer_distance_choice`
+
+- At least `3` depth-valid candidate entities are required.
+- The builder takes the nearest `6` by depth, then uses the first `4` when
+  available, otherwise the first `3`.
+- Adjacent depths among the selected set must differ by at least `0.35m`.
+
+#### `relative_3d_position_mc`
+
+- Both entities must be compact:
+  - `x_fov <= 35°`
+  - `y_fov <= 35°`
+  - `x_fov * y_fov <= 1200`
+- Large structure-like categories are filtered out entirely for this task:
+  - `building`
+  - `wall`
+  - `ceiling`
+  - `roof`
+  - `floor`
+  - `ground`
+  - `road`
+  - `sidewalk`
+  - `facade`
+  - `fence`
+  - `railing`
+  - `gate`
+- A relation is only kept if the geometry resolves to a clean 1-axis or 2-axis
+  camera-centered relation.
+- If no axis is sufficiently clear, or more than two axes become active, the
+  sample is dropped.
+
+#### `seam_continuity_mc`
+
+- Only boundary-valid seam cases are kept.
+- The five seam subtypes use different structural conditions:
+  - `nearest_neighbor`
+    - requires a boundary-touching target
+    - requires a correct opposite-boundary neighbor with small wrap gap
+    - requires a flat-image lure and additional distractors
+  - `relative_direction`
+    - requires a valid close wrap-around pair
+  - `dedup_count`
+    - requires `seam_crossing_flag = true`
+  - `structure_continuity`
+    - requires `seam_crossing_flag = true`
+    - further restricted to structure-like targets only
+  - `same_entity_judgement`
+    - requires `seam_crossing_flag = true`
+- If natural seam samples are too scarce, the builder synthesizes seam stress
+  items through yaw-rotated ERP scenes.
+- Derived seam samples may reuse the same source scene, but they must come from
+  different target entities. The builder will not generate multiple seam
+  variants for the same entity.
+
+#### `polar_shape_recovery_mc`
+
+- Requires a valid semantic `shape` label.
+- Natural items require either:
+  - `abs(lat) >= 60°`
+  - or `infer_pole_proximity(entity)`
+- To avoid answer leakage, this task uses a sanitized reference form:
+  - coarse object label
+  - plus one deterministic localization cue
+  - either normalized `0-1000` box coordinates or BFOV
+- If natural polar cases are too scarce, the builder synthesizes polar stress
+  items through pitch-rotated ERP scenes.
+- Derived polar targeting is intentionally conservative:
+  - target latitude band: roughly `50°-70°`
+  - candidate pitch rotations: around `40°-50°`
+- Derived polar samples may reuse the same source scene, but they must come
+  from different target entities. The builder will not generate multiple polar
+  variants for the same entity.
+
 ## Inputs
 
 The builder expects a directory tree containing many `metadata.json` files, for
