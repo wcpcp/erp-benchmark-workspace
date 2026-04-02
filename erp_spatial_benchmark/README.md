@@ -167,9 +167,14 @@ aggressively.
 When a scene contains multiple similar instances of the same category, the
 builder now disambiguates only when needed:
 
-- for mild duplicate cases, it adds a light natural cue such as `near the right side`
-- for heavier duplicate cases, it preserves the natural phrase but also appends
-  a compact localization cue derived from normalized box coordinates or BFOV
+- it first checks whether the natural referring phrases are actually too similar
+- for mild duplicate cases, it adds a light natural cue such as
+  `near the right side`
+- for heavier duplicate cases, it prefers natural disambiguators such as
+  left/right or upper/lower wording
+- if a duplicate-heavy case still cannot be described cleanly without leaking
+  too much positional information, the item is filtered out instead of forcing
+  explicit coordinates into the question text
 
 This is only used for duplicate-heavy cases; it is not added to every item.
 

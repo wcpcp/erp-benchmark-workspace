@@ -119,6 +119,36 @@ RELATIVE_3D_BLOCKLIST_SUBSTRINGS = (
     "railing",
     "gate",
 )
+REFERENCE_STOPWORDS = {
+    "the",
+    "a",
+    "an",
+    "with",
+    "and",
+    "of",
+    "on",
+    "in",
+    "at",
+    "near",
+    "to",
+    "from",
+    "for",
+    "by",
+    "visible",
+    "standing",
+    "parked",
+    "side",
+    "front",
+    "back",
+    "left",
+    "right",
+    "upper",
+    "lower",
+    "top",
+    "bottom",
+    "center",
+    "middle",
+}
 
 TASK_SPECS: Dict[str, Dict[str, Any]] = {
     "referring_grounding_bfov": {
@@ -370,7 +400,11 @@ def build_scene_side_info(scene: SceneMetadata, manifest: Dict[str, SceneSideInf
 def generate_scene_candidates(scene: SceneMetadata) -> List[Dict[str, Any]]:
     candidates: List[Dict[str, Any]] = []
     label_counts = Counter(entity.label for entity in scene.entities)
-    anchors = [item for item in select_anchor_entities(scene, max_anchors=8) if benchmark_anchor_eligible(item["entity"])]
+    anchors = [
+        item
+        for item in select_anchor_entities(scene, max_anchors=8)
+        if benchmark_anchor_eligible(item["entity"]) and reference_is_resolvable(scene, item["entity"])
+    ]
 
     used_item_ids: set[str] = set()
     for anchor_index, anchor_payload in enumerate(anchors):
@@ -486,9 +520,44 @@ def ref_has_spatial_hint(text: str) -> bool:
     return any(token in normalized for token in hint_tokens)
 
 
+def reference_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in normalize_phrase(text).split()
+        if token and token not in REFERENCE_STOPWORDS and len(token) > 2
+    }
+
+
+def refs_semantically_similar(text_a: str, text_b: str) -> bool:
+    norm_a = normalize_phrase(text_a)
+    norm_b = normalize_phrase(text_b)
+    if not norm_a or not norm_b:
+        return False
+    if norm_a == norm_b:
+        return True
+    tokens_a = reference_tokens(norm_a)
+    tokens_b = reference_tokens(norm_b)
+    if not tokens_a or not tokens_b:
+        return False
+    overlap = len(tokens_a & tokens_b) / max(1, len(tokens_a | tokens_b))
+    return overlap >= 0.72
+
+
 def duplicate_label_count(scene: SceneMetadata, entity: Entity) -> int:
     label = normalize_phrase(entity.label)
     return sum(1 for other in scene.entities if normalize_phrase(other.label) == label)
+
+
+def similar_duplicate_entities(scene: SceneMetadata, entity: Entity) -> List[Entity]:
+    label = normalize_phrase(entity.label)
+    base_ref = descriptive_entity_ref(entity)
+    similar: List[Entity] = []
+    for other in scene.entities:
+        if normalize_phrase(other.label) != label:
+            continue
+        if refs_semantically_similar(base_ref, descriptive_entity_ref(other)):
+            similar.append(other)
+    return similar
 
 
 def coarse_sector_hint(entity: Entity) -> str:
@@ -502,28 +571,60 @@ def coarse_sector_hint(entity: Entity) -> str:
     return "front side"
 
 
+def duplicate_disambiguation_hint(scene: SceneMetadata, entity: Entity) -> Optional[str]:
+    similar = similar_duplicate_entities(scene, entity)
+    if len(similar) <= 1:
+        return ""
+
+    side_counts = Counter(coarse_sector_hint(other) for other in similar)
+    entity_side = coarse_sector_hint(entity)
+    if side_counts[entity_side] == 1:
+        return f"near the {entity_side}"
+
+    centers = []
+    for other in similar:
+        if len(other.bbox_erp) == 4:
+            x1, y1, x2, y2 = other.bbox_erp
+            centers.append((other.entity_id, (float(x1) + float(x2)) / 2.0, (float(y1) + float(y2)) / 2.0))
+
+    if len(centers) >= 2:
+        width = float(scene.erp_width or 0.0)
+        height = float(scene.erp_height or 0.0)
+
+        centers_x = sorted(centers, key=lambda item: item[1])
+        if width > 0 and (centers_x[-1][1] - centers_x[0][1]) >= 0.18 * width:
+            if centers_x[0][0] == entity.entity_id:
+                return "toward the left side"
+            if centers_x[-1][0] == entity.entity_id:
+                return "toward the right side"
+
+        centers_y = sorted(centers, key=lambda item: item[2])
+        if height > 0 and (centers_y[-1][2] - centers_y[0][2]) >= 0.14 * height:
+            if centers_y[0][0] == entity.entity_id:
+                return "in the upper part of the scene"
+            if centers_y[-1][0] == entity.entity_id:
+                return "in the lower part of the scene"
+
+    if len(similar) >= 3:
+        return None
+    return f"near the {entity_side}"
+
+
+def reference_is_resolvable(scene: SceneMetadata, entity: Entity) -> bool:
+    return duplicate_disambiguation_hint(scene, entity) is not None
+
+
 def contextual_entity_ref(scene: SceneMetadata, entity: Entity) -> str:
     ref = descriptive_entity_ref(entity)
-    dup_count = duplicate_label_count(scene, entity)
-    if dup_count <= 1:
+    similar = similar_duplicate_entities(scene, entity)
+    if len(similar) <= 1:
         return ref
-    side_hint = f"near the {coarse_sector_hint(entity)}"
-    if dup_count == 2:
-        if ref_has_spatial_hint(ref):
-            return ref
-        return f"{ref} {side_hint}"
-
-    # For heavier duplicate cases, keep the natural phrase but attach a compact
-    # localization cue so the target can still be uniquely identified.
     if ref_has_spatial_hint(ref):
-        base = ref
-    else:
-        base = f"{ref} {side_hint}"
-    localizer = safe_entity_ref(entity, scene, f"duplicate:{scene.scene_id}:{entity.entity_id}")
-    prefix = f"the {normalize_phrase(entity.label) or 'object'} "
-    if localizer.startswith(prefix):
-        localizer = localizer[len(prefix):]
-    return f"{base} ({localizer})"
+        return ref
+    hint = duplicate_disambiguation_hint(scene, entity)
+    if not hint:
+        return ref
+    return f"{ref} {hint}"
 
 
 def normalized_bbox_1000(entity: Entity, scene: SceneMetadata) -> Optional[Tuple[int, int, int, int]]:
@@ -1145,7 +1246,11 @@ def augment_representation_stress_candidates(
             produced_for_scene = 0
             used_target_ids: set[str] = set()
             info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
-            anchors = [item for item in select_anchor_entities(scene, max_anchors=8) if benchmark_anchor_eligible(item["entity"])]
+            anchors = [
+                item
+                for item in select_anchor_entities(scene, max_anchors=8)
+                if benchmark_anchor_eligible(item["entity"]) and reference_is_resolvable(scene, item["entity"])
+            ]
             for anchor_payload in anchors:
                 if produced >= seam_needed or produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
                     break
@@ -1177,7 +1282,11 @@ def augment_representation_stress_candidates(
             produced_for_scene = 0
             used_target_ids: set[str] = set()
             info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
-            anchors = [item for item in select_anchor_entities(scene, max_anchors=8) if benchmark_anchor_eligible(item["entity"])]
+            anchors = [
+                item
+                for item in select_anchor_entities(scene, max_anchors=8)
+                if benchmark_anchor_eligible(item["entity"]) and reference_is_resolvable(scene, item["entity"])
+            ]
             for anchor_payload in anchors:
                 if produced >= polar_needed or produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
                     break
@@ -1209,6 +1318,8 @@ def augment_representation_stress_candidates(
 def build_referring_grounding_bfov(scene: SceneMetadata, target: Entity, anchors: Sequence[Dict[str, Any]], anchor_index: int, quality: float) -> Optional[Dict[str, Any]]:
     if target.resolved_bfov is None:
         return None
+    if not reference_is_resolvable(scene, target):
+        return None
     target_ref = contextual_entity_ref(scene, target)
     question = pick_template("referring_grounding_bfov", f"{scene.scene_id}:{target.entity_id}").format(target_ref=target_ref)
     answer_text = bfov_text(target)
@@ -1233,6 +1344,8 @@ def build_referring_grounding_bfov(scene: SceneMetadata, target: Entity, anchors
 
 def build_absolute_direction_mc(scene: SceneMetadata, target: Entity, anchor_index: int, quality: float) -> Optional[Dict[str, Any]]:
     if not direction_task_entity_eligible(target):
+        return None
+    if not reference_is_resolvable(scene, target):
         return None
     sector = absolute_sector_8way(target)
     margin = effective_direction_margin(target, absolute_sector_margin(target))
@@ -1446,6 +1559,8 @@ def seam_structure_like(entity: Entity) -> bool:
 
 
 def build_seam_nearest_neighbor_mc(scene: SceneMetadata, target: Entity, quality: float) -> Optional[Dict[str, Any]]:
+    if not reference_is_resolvable(scene, target):
+        return None
     bundles = seam_wrap_candidate_sets(scene, target)
     if bundles is None:
         return None
@@ -1504,6 +1619,8 @@ def build_seam_nearest_neighbor_mc(scene: SceneMetadata, target: Entity, quality
 
 
 def build_seam_relative_direction_mc(scene: SceneMetadata, target: Entity, quality: float) -> Optional[Dict[str, Any]]:
+    if not reference_is_resolvable(scene, target):
+        return None
     bundles = seam_wrap_candidate_sets(scene, target)
     if bundles is None:
         return None
@@ -1548,6 +1665,8 @@ def build_seam_relative_direction_mc(scene: SceneMetadata, target: Entity, quali
 
 
 def build_seam_dedup_count_mc(scene: SceneMetadata, target: Entity, quality: float) -> Optional[Dict[str, Any]]:
+    if not reference_is_resolvable(scene, target):
+        return None
     side = seam_contact_side(target, scene)
     if side is None:
         return None
@@ -1589,6 +1708,8 @@ def build_seam_dedup_count_mc(scene: SceneMetadata, target: Entity, quality: flo
 
 
 def build_seam_structure_continuity_mc(scene: SceneMetadata, target: Entity, quality: float) -> Optional[Dict[str, Any]]:
+    if not reference_is_resolvable(scene, target):
+        return None
     side = seam_contact_side(target, scene)
     if side is None or not bool(target.seam_crossing_flag):
         return None
@@ -1631,6 +1752,8 @@ def build_seam_structure_continuity_mc(scene: SceneMetadata, target: Entity, qua
 
 
 def build_seam_same_entity_mc(scene: SceneMetadata, target: Entity, quality: float) -> Optional[Dict[str, Any]]:
+    if not reference_is_resolvable(scene, target):
+        return None
     side = seam_contact_side(target, scene)
     if side is None or not bool(target.seam_crossing_flag):
         return None
@@ -1689,6 +1812,8 @@ def build_seam_continuity_items(
 def build_relative_direction_mc(scene: SceneMetadata, reference: Entity, target: Entity, anchor_index: int, partner_index: int, quality: float) -> Optional[Dict[str, Any]]:
     if not direction_task_entity_eligible(reference) or not direction_task_entity_eligible(target):
         return None
+    if not reference_is_resolvable(scene, reference) or not reference_is_resolvable(scene, target):
+        return None
     delta = wrapped_delta_deg(yaw_deg_360(target) - yaw_deg_360(reference))
     relation = panoramic_relation_from_delta(delta, opposite_label="opposite")
     if relation is None:
@@ -1732,6 +1857,8 @@ def build_relative_direction_mc(scene: SceneMetadata, reference: Entity, target:
 def build_camera_rotation_transform_mc(scene: SceneMetadata, target: Entity, anchor_index: int, partner_index: int, quality: float) -> Optional[Dict[str, Any]]:
     if not direction_task_entity_eligible(target):
         return None
+    if not reference_is_resolvable(scene, target):
+        return None
     rotation_direction, angle_deg = ROTATION_OPTIONS[stable_hash(f"{scene.scene_id}:{target.entity_id}:rotation") % len(ROTATION_OPTIONS)]
     relation = camera_rotation_relation(target, rotation_direction, angle_deg)
     if relation is None:
@@ -1772,6 +1899,8 @@ def build_camera_rotation_transform_mc(scene: SceneMetadata, target: Entity, anc
 
 def build_object_conditioned_reorientation_mc(scene: SceneMetadata, facing: Entity, target: Entity, anchor_index: int, partner_index: int, quality: float) -> Optional[Dict[str, Any]]:
     if not direction_task_entity_eligible(facing) or not direction_task_entity_eligible(target):
+        return None
+    if not reference_is_resolvable(scene, facing) or not reference_is_resolvable(scene, target):
         return None
     delta = wrapped_delta_deg(yaw_deg_360(target) - yaw_deg_360(facing))
     relation = panoramic_relation_from_delta(delta, opposite_label="behind")
@@ -1855,6 +1984,8 @@ def build_observer_distance_choice(scene: SceneMetadata, anchors: Sequence[Dict[
         return None
     candidates = sorted(candidates, key=lambda entity: float(entity.entity_center_depth))[:6]
     selected = candidates[:4] if len(candidates) >= 4 else candidates[:3]
+    if any(not reference_is_resolvable(scene, entity) for entity in selected):
+        return None
     depths = [float(entity.entity_center_depth) for entity in selected]
     if min(abs(depths[i] - depths[i + 1]) for i in range(len(depths) - 1)) < 0.35:
         return None
@@ -1886,6 +2017,8 @@ def build_observer_distance_choice(scene: SceneMetadata, anchors: Sequence[Dict[
 
 def build_relative_3d_position_mc(scene: SceneMetadata, entity_a: Entity, entity_b: Entity, anchor_index: int, partner_index: int, quality: float) -> Optional[Dict[str, Any]]:
     if not compact_for_relative_3d(entity_a) or not compact_for_relative_3d(entity_b):
+        return None
+    if not reference_is_resolvable(scene, entity_a) or not reference_is_resolvable(scene, entity_b):
         return None
     relation, parts = relative_3d_relation(entity_a, entity_b)
     if not relation:
