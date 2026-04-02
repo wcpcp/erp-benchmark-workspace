@@ -989,7 +989,9 @@ def bbox_dims(entity: Entity) -> Tuple[float, float]:
 
 
 def yaw_to_erp_x(yaw_deg: float, width: int) -> float:
-    return ((float(yaw_deg) % 360.0) / 360.0) * float(width)
+    # ERP convention used in this benchmark: yaw=0 is the front-facing center,
+    # while the horizontal seam sits at yaw=+/-180 on the left/right image edge.
+    return (((float(yaw_deg) + 180.0) % 360.0) / 360.0) * float(width)
 
 
 def pitch_to_erp_y(pitch_deg: float, height: int) -> float:
@@ -1257,7 +1259,8 @@ def augment_representation_stress_candidates(
                 target = anchor_payload["entity"]
                 if target.entity_id in used_target_ids:
                     continue
-                shift = wrapped_delta_deg(yaw_deg_360(target) - 358.0)
+                # Move the target to the ERP seam, not to the front center.
+                shift = wrapped_delta_deg(yaw_deg_360(target) - 180.0)
                 suffix = f"seam_yaw_{int(round(shift))}_{target.entity_id}"
                 derived_scene = build_rotated_scene(scene, yaw_shift_deg=shift, suffix=suffix, output_dir=output_dir)
                 if derived_scene is None:
