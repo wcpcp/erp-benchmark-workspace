@@ -216,6 +216,27 @@ This keeps the polar prompts informative enough to locate the target while
 avoiding easy leakage of shape, material, color, or other rich semantic
 attributes.
 
+For derived yaw/pitch rotations, the builder also rewrites the main
+geometry-bearing metadata so derived scenes remain internally consistent for
+benchmark construction. Updated fields include:
+
+- `lon_lat`
+- `bfov.yaw_deg`
+- `bfov.pitch_deg`
+- `entity_bfov`
+- `bbox_erp`
+- `entity_xyz_camera`
+- `spatial.yaw_deg`
+- `spatial.pitch_deg`
+- `spatial.xyz_camera_m`
+- `seam_crossing_flag`
+- `pole_proximity_flag`
+
+Depth-related scalars such as `entity_center_depth` are preserved because a
+rigid camera rotation changes viewpoint but not distance. Detector/reground
+scores are also preserved. Pixel-space masks are cleared in derived scenes
+because the original mask is no longer aligned after spherical reprojection.
+
 ## High-Quality Filtering Strategy
 
 This benchmark is intentionally quality-first rather than quantity-first. The
@@ -382,7 +403,16 @@ These rules apply broadly across the benchmark before task-specific logic runs.
 
 #### `polar_shape_recovery_mc`
 
-- Requires a valid semantic `shape` label.
+- Requires a valid canonical geometric `shape` label such as:
+  - `round`
+  - `rectangular`
+  - `square`
+  - `oval`
+  - `cylindrical`
+  - `spherical`
+  - `triangular`
+  - `arched`
+- Non-geometric subtype labels such as vehicle/body-style terms are rejected.
 - Natural items require either:
   - `abs(lat) >= 60°`
   - or `infer_pole_proximity(entity)`
@@ -390,6 +420,8 @@ These rules apply broadly across the benchmark before task-specific logic runs.
   - coarse object label
   - plus one deterministic localization cue
   - either normalized `0-1000` box coordinates or BFOV
+- Distractors prefer geometry-near alternatives rather than arbitrary fallback
+  words.
 - If natural polar cases are too scarce, the builder synthesizes polar stress
   items through pitch-rotated ERP scenes.
 - Derived polar targeting is intentionally conservative:

@@ -73,6 +73,37 @@ SHAPE_FALLBACK_POOL = [
     "triangular",
     "arched",
 ]
+SHAPE_CANONICAL_MAP = {
+    "round": "round",
+    "circular": "round",
+    "circle": "round",
+    "rectangular": "rectangular",
+    "rectangle": "rectangular",
+    "boxy": "rectangular",
+    "box-shaped": "rectangular",
+    "square": "square",
+    "oval": "oval",
+    "elliptical": "oval",
+    "ellipse": "oval",
+    "cylindrical": "cylindrical",
+    "cylinder": "cylindrical",
+    "spherical": "spherical",
+    "sphere": "spherical",
+    "triangular": "triangular",
+    "triangle": "triangular",
+    "arched": "arched",
+    "arch": "arched",
+}
+SHAPE_DISTRACTOR_MAP = {
+    "round": ["oval", "spherical", "cylindrical"],
+    "rectangular": ["square", "oval", "cylindrical"],
+    "square": ["rectangular", "triangular", "round"],
+    "oval": ["round", "rectangular", "cylindrical"],
+    "cylindrical": ["round", "rectangular", "square"],
+    "spherical": ["round", "oval", "cylindrical"],
+    "triangular": ["arched", "rectangular", "square"],
+    "arched": ["triangular", "rectangular", "square"],
+}
 ROTATION_OPTIONS = [
     ("right", 90),
     ("left", 90),
@@ -782,7 +813,7 @@ def shape_value(entity: Entity) -> Optional[str]:
     if raw is None:
         return None
     value = normalize_phrase(str(raw))
-    return value if value else None
+    return SHAPE_CANONICAL_MAP.get(value)
 
 
 def stable_hash(text: str) -> int:
@@ -1152,6 +1183,34 @@ def transformed_bbox(entity: Entity, scene: SceneMetadata, yaw_deg: float, pitch
     return [max(0.0, x1), y1, min(float(width), x2), y2], False
 
 
+def bfov_extents_from_item(item: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
+    entity_bfov = item.get("entity_bfov")
+    if isinstance(entity_bfov, list) and len(entity_bfov) == 4:
+        try:
+            return float(entity_bfov[2]), float(entity_bfov[3])
+        except (TypeError, ValueError):
+            pass
+    bfov = item.get("bfov", {}) or {}
+    x_fov = bfov.get("x_fov_deg")
+    y_fov = bfov.get("y_fov_deg")
+    try:
+        return (None if x_fov is None else float(x_fov), None if y_fov is None else float(y_fov))
+    except (TypeError, ValueError):
+        return (None, None)
+
+
+def xyz_camera_from_yaw_pitch_depth(yaw_deg: float, pitch_deg: float, depth: Optional[float]) -> Optional[List[float]]:
+    if depth is None:
+        return None
+    depth_value = float(depth)
+    yaw_rad = math.radians(float(yaw_deg))
+    pitch_rad = math.radians(float(pitch_deg))
+    x = depth_value * math.cos(pitch_rad) * math.sin(yaw_rad)
+    y = depth_value * math.sin(-pitch_rad)
+    z = depth_value * math.cos(pitch_rad) * math.cos(yaw_rad)
+    return [x, y, z]
+
+
 def derived_image_path(scene: SceneMetadata, suffix: str) -> Path:
     original = Path(scene.erp_image_path)
     return original.parent / f"{original.stem}__{suffix}{original.suffix}"
@@ -1181,6 +1240,7 @@ def build_rotated_scene(
     for entity in scene.raw.get("entities", []):
         item = copy.deepcopy(entity)
         bfov = item.get("bfov", {}) or {}
+        x_fov_deg, y_fov_deg = bfov_extents_from_item(item)
         yaw_old = float(bfov.get("yaw_deg", math.degrees(float(item.get("lon_lat", [0.0, 0.0])[0]))))
         pitch_old = float(bfov.get("pitch_deg", -math.degrees(float(item.get("lon_lat", [0.0, 0.0])[1]))))
         yaw_new, pitch_new = rotate_yaw_pitch(
@@ -1196,10 +1256,29 @@ def build_rotated_scene(
         item.setdefault("bfov", {})
         item["bfov"]["yaw_deg"] = yaw_new
         item["bfov"]["pitch_deg"] = pitch_new
+        if x_fov_deg is not None:
+            item["bfov"]["x_fov_deg"] = x_fov_deg
+        if y_fov_deg is not None:
+            item["bfov"]["y_fov_deg"] = y_fov_deg
+        if x_fov_deg is not None and y_fov_deg is not None:
+            item["entity_bfov"] = [yaw_new, pitch_new, x_fov_deg, y_fov_deg]
+        else:
+            item.pop("entity_bfov", None)
         bbox, seam_cross = transformed_bbox(Entity.from_dict(item), scene, yaw_new % 360.0, pitch_new)
         item["bbox_erp"] = bbox
-        item["seam_crossing_flag"] = bool(item.get("seam_crossing_flag")) or seam_cross
-        item["pole_proximity_flag"] = bool(item.get("pole_proximity_flag")) or abs(lat_new) >= 60.0
+        item["seam_crossing_flag"] = bool(seam_cross)
+        item["pole_proximity_flag"] = abs(lat_new) >= 60.0
+        rotated_xyz = xyz_camera_from_yaw_pitch_depth(yaw_new, pitch_new, item.get("entity_center_depth"))
+        item["entity_xyz_camera"] = rotated_xyz
+        spatial = item.get("spatial", {}) or {}
+        spatial["yaw_deg"] = yaw_new
+        spatial["pitch_deg"] = pitch_new
+        spatial["xyz_camera_m"] = rotated_xyz
+        if item.get("entity_center_depth") is not None:
+            spatial["range_m"] = float(item["entity_center_depth"])
+        item["spatial"] = spatial
+        # Masks are no longer aligned with the derived image after spherical rotation.
+        item["mask_rle"] = {}
         transformed_entities.append(item)
 
     raw["entities"] = transformed_entities
@@ -2072,7 +2151,7 @@ def build_polar_shape_recovery(scene: SceneMetadata, target: Entity, anchor_inde
     if not (abs(target.lat_deg) >= 60.0 or infer_pole_proximity(target)):
         return None
     target_ref = entity_ref(target, scene, f"{scene.scene_id}:polar_shape_recovery_mc:{target.entity_id}:target")
-    distractors = [item for item in SHAPE_FALLBACK_POOL if item != shape][:3]
+    distractors = SHAPE_DISTRACTOR_MAP.get(shape, [item for item in SHAPE_FALLBACK_POOL if item != shape][:3])
     if len(distractors) < 3:
         return None
     options = [shape] + distractors
