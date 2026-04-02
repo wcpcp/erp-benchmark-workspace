@@ -765,8 +765,9 @@ def absolute_sector_8way(entity: Entity) -> str:
 
 
 def absolute_sector_margin(entity: Entity) -> float:
-    yaw = yaw_deg_360(entity) % 45.0
-    return min(yaw, 45.0 - yaw)
+    yaw = yaw_deg_360(entity)
+    center = float(ABSOLUTE_SECTORS_8.index(absolute_sector_8way(entity)) * 45)
+    return max(0.0, 22.5 - abs(wrapped_delta_deg(yaw - center)))
 
 
 def panoramic_relation_from_delta(delta_yaw: float, *, opposite_label: str) -> Optional[str]:
@@ -1385,6 +1386,31 @@ def absolute_direction_target_counts(target_per_task: int) -> Dict[str, int]:
     return counts
 
 
+def derived_candidate_entities(
+    scene: SceneMetadata,
+    *,
+    predicate: Optional[Any] = None,
+    max_entities: int = 24,
+) -> List[Entity]:
+    label_counts = Counter(entity.label for entity in scene.entities)
+    filtered: List[Entity] = []
+    for entity in scene.entities:
+        if not benchmark_entity_eligible(entity):
+            continue
+        if not reference_is_resolvable(scene, entity):
+            continue
+        if predicate is not None and not predicate(entity):
+            continue
+        filtered.append(entity)
+    filtered.sort(
+        key=lambda entity: (
+            -float(score_entity(entity, label_counts, scene)),
+            stable_hash(f"derived:{scene.scene_id}:{entity.entity_id}"),
+        )
+    )
+    return filtered[:max_entities]
+
+
 def augment_representation_stress_candidates(
     scenes: Sequence[SceneMetadata],
     all_candidates: List[Dict[str, Any]],
@@ -1433,17 +1459,13 @@ def augment_representation_stress_candidates(
             produced_for_scene = 0
             used_target_ids: set[str] = set()
             info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
-            anchors = [
-                item
-                for item in select_anchor_entities(scene, max_anchors=8)
-                if benchmark_anchor_eligible(item["entity"])
-                and reference_is_resolvable(scene, item["entity"])
-                and direction_task_entity_eligible(item["entity"])
-            ]
-            for anchor_payload in anchors:
+            targets = derived_candidate_entities(
+                scene,
+                predicate=direction_task_entity_eligible,
+            )
+            for target in targets:
                 if produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
                     break
-                target = anchor_payload["entity"]
                 if target.entity_id in used_target_ids:
                     continue
                 for sector in sorted(
@@ -1482,15 +1504,10 @@ def augment_representation_stress_candidates(
             produced_for_scene = 0
             used_target_ids: set[str] = set()
             info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
-            anchors = [
-                item
-                for item in select_anchor_entities(scene, max_anchors=8)
-                if benchmark_anchor_eligible(item["entity"]) and reference_is_resolvable(scene, item["entity"])
-            ]
-            for anchor_payload in anchors:
+            targets = derived_candidate_entities(scene)
+            for target in targets:
                 if produced >= seam_needed or produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
                     break
-                target = anchor_payload["entity"]
                 if target.entity_id in used_target_ids:
                     continue
                 # Move the target to the ERP seam, not to the front center.
@@ -1519,15 +1536,10 @@ def augment_representation_stress_candidates(
             produced_for_scene = 0
             used_target_ids: set[str] = set()
             info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
-            anchors = [
-                item
-                for item in select_anchor_entities(scene, max_anchors=8)
-                if benchmark_anchor_eligible(item["entity"]) and reference_is_resolvable(scene, item["entity"])
-            ]
-            for anchor_payload in anchors:
+            targets = derived_candidate_entities(scene)
+            for target in targets:
                 if produced >= polar_needed or produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
                     break
-                target = anchor_payload["entity"]
                 if target.entity_id in used_target_ids:
                     continue
                 if shape_value(target) is None:
@@ -2426,7 +2438,7 @@ def build_summary(
 ) -> Dict[str, Any]:
     def task_counter(rows: Sequence[Dict[str, Any]]) -> Dict[str, int]:
         counts = Counter(row["task_id"] for row in rows)
-        return dict(sorted(counts.items()))
+        return {task_id: int(counts.get(task_id, 0)) for task_id in sorted(TASK_SPECS)}
 
     def group_counter(rows: Sequence[Dict[str, Any]]) -> Dict[str, int]:
         counts = Counter(row["ability_group"] for row in rows)

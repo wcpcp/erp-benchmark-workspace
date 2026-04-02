@@ -325,6 +325,9 @@ These rules apply broadly across the benchmark before task-specific logic runs.
   not appear together.
 - If the natural candidate pool is underfilled, derived yaw rotations are used
   to supplement this target sector mix.
+- These derived absolute-direction candidates are drawn from the broader pool
+  of high-quality, resolvable entities rather than only the top anchor subset,
+  so conservative anchor selection does not accidentally starve the task.
 
 #### `relative_direction_mc`
 
@@ -461,11 +464,13 @@ The script writes:
 - `benchmark_public_prompts.jsonl`
 - `benchmark_public_references.jsonl`
 - `summary.json`
-- `derived_metadata/*.json` when seam/polar stress items are synthesized
+- `derived_metadata/*.json` when derived stress items are synthesized
 
-If natural seam or polar cases are too scarce, the builder now automatically
+If natural absolute-direction, seam, or polar cases are too scarce, the builder now automatically
 creates derived stress samples:
 
+- absolute-direction stress: yaw-shifted ERP panoramas that move strong targets
+  into the challenge sectors used by `absolute_direction_mc`
 - seam stress: yaw-shifted ERP panoramas that move strong targets toward the
   left/right seam
 - polar stress: pitch-rotated ERP panoramas that move strong targets toward
@@ -485,7 +490,8 @@ For derived scenes, geometry-bearing metadata such as `lon_lat`, `bfov`,
 `entity_bfov`, `bbox_erp`, `entity_xyz_camera`, and `spatial.xyz_camera_m` are
 rewritten into the rotated camera frame; `bbox_erp` is re-estimated from
 sampled box points after spherical reprojection rather than by simple center
-translation.
+translation. `summary.json` now reports every benchmark task explicitly,
+including tasks whose current candidate count is `0`.
 
 ## How scoring works
 
