@@ -1,238 +1,433 @@
 # Benchmark Workspace
 
-这个 `benchmark/` 目录当前承担两条工作线：
+这个 `benchmark/` 仓库同时做两件事：
 
-1. **统一封装并评测已有 benchmark**
-   - 入口主要在 [src/erp_benchmarks](/Users/wcp/code/erp_data_pipeline/benchmark/src/erp_benchmarks)
-   - 用于公开 benchmark 对比和外部基线
+1. **统一准备、预测、评测公开 benchmark**
+2. **构建并评测我们自己的 ERP 空间 benchmark**
 
-2. **构建我们自己的 ERP 空间 benchmark**
-   - 当前正式版本在 [erp_spatial_benchmark](/Users/wcp/code/erp_data_pipeline/benchmark/erp_spatial_benchmark)
-   - 用于测试模型是否真正理解 ERP 所表示的全景空间
+所以这里不是只有自建 benchmark，也不是只有公开 benchmark 适配层，而是两条工作线共用一个仓库。
 
-所以这个仓库没有“改名成只做自定义 benchmark”，而是在保留原有公开 benchmark 评测层的同时，新增了一个正式的 ERP benchmark 构建层。
+## 目录概览
 
-## 目录结构
-
-### 1. 公开 benchmark 统一评测层
+### 公开 benchmark 统一评测层
 
 - [src/erp_benchmarks](/Users/wcp/code/erp_data_pipeline/benchmark/src/erp_benchmarks)
 - [registry.yaml](/Users/wcp/code/erp_data_pipeline/benchmark/registry.yaml)
 - [scripts/prepare_benchmarks.py](/Users/wcp/code/erp_data_pipeline/benchmark/scripts/prepare_benchmarks.py)
 - [scripts/predict_benchmark.py](/Users/wcp/code/erp_data_pipeline/benchmark/scripts/predict_benchmark.py)
 - [scripts/run_benchmark.py](/Users/wcp/code/erp_data_pipeline/benchmark/scripts/run_benchmark.py)
-- [data](/Users/wcp/code/erp_data_pipeline/benchmark/data)
-- [results](/Users/wcp/code/erp_data_pipeline/benchmark/results)
-- [reports](/Users/wcp/code/erp_data_pipeline/benchmark/reports)
 
-### 2. 自定义 ERP benchmark 构建层
+### 自建 benchmark 层
 
 - [erp_spatial_benchmark](/Users/wcp/code/erp_data_pipeline/benchmark/erp_spatial_benchmark)
-  - 当前正式版 builder、design 和 scorer
+  - 当前正式版自建 ERP benchmark
 - [custom_erp_foundation_benchmark](/Users/wcp/code/erp_data_pipeline/benchmark/custom_erp_foundation_benchmark)
-  - 早期草案和探索，不再作为正式入口
+  - 早期草案，不再作为正式主入口
 
-### 3. 第三方参考资源
+## 当前支持的公开 benchmark
 
-- [_third_party](/Users/wcp/code/erp_data_pipeline/benchmark/_third_party)
+当前 registry 和评测层里可统一管理的 benchmark 包括：
 
-## 当前 ERP benchmark 在测什么
+- `osr-bench`
+- `panoenv`
+- `omnispatial`
+- `hstar-bench-erp`
+- `hstar-bench`
+- `360loc`
+- `habitat-nav`
 
-当前正式版 ERP benchmark 不想测“泛化视觉问答”，而是专门测：
+其中：
 
-> 模型是否把 ERP 图像学成了一个有意义的球面 / 全景 / observer-centered / ERP-specific 空间表示。
+- **支持统一 `predict + evaluate` 的**
+  - `osr-bench`
+  - `panoenv`
+  - `omnispatial`
+  - `hstar-bench-erp`
 
-当前的四类核心能力是：
+- **当前主要支持 `evaluate` 的**
+  - `hstar-bench`
+  - `360loc`
+  - `habitat-nav`
 
-### 1. `spherical_localization_and_panoramic_topology`
+## 三步工作流
 
-对应任务：
+无论是公开 benchmark 还是自建 benchmark，建议都按这三个阶段理解：
 
-- `referring_grounding_bfov`
-- `absolute_direction_mc`
-- `relative_direction_mc`
+1. **prepare**
+   - 下载或整理原始数据
+   - 生成 manifest / references
+2. **predict**
+   - 用模型读取 benchmark 输入
+   - 输出 `predictions.jsonl`
+3. **evaluate**
+   - 用参考答案对预测打分
 
-这组测：
+`evaluate` **不会**替你跑模型，它只负责读预测文件并评分。
 
-- 单目标球面定位
-- 绝对方向理解
-- 全景环的相对角关系
+---
 
-### 2. `viewpoint_conditioned_spatial_updating`
+## 公开 benchmark：准备数据
 
-对应任务：
-
-- `camera_rotation_transform_mc`
-- `object_conditioned_reorientation_mc`
-
-这组测：
-
-- 当观察方向变化时，模型能否正确更新空间关系
-
-### 3. `observer_centered_3d_layout_understanding`
-
-对应任务：
-
-- `observer_distance_choice`
-- `relative_3d_position_mc`
-
-这组测：
-
-- 是否能从 ERP 中恢复 observer-centered 3D 布局
-
-### 4. `erp_representation_understanding`
-
-对应任务：
-
-- `seam_continuity_mc`
-- `polar_shape_recovery_mc`
-
-这组测：
-
-- 左右 seam 的 wrap-around 连续性
-  - 当前 seam continuity 统一为 5 个固定子题：
-    - 跨边界最近邻
-    - 跨边界相对方向
-    - 去重计数
-    - 结构连续性
-    - 同一实体判断
-  - 每个子题当前只保留 1 个固定 benchmark 模板，不做多模板扩增
-  - 其中 `structure_continuity` 只对结构/表面类目标出题，例如墙、桌面/台面、路面/地面、天花、护栏
-- 高纬 / 极区畸变理解
-- ERP 表示特性本身，而不是一般空间问答
-
-当前正式 scored benchmark 里，rotation consistency 暂时不作为单独 QA 任务发布。
-它更适合作为后续的 paired diagnostic protocol，而不是当前版本的 headline task。
-
-当前推荐的补充协议在：
-
-- [ROTATION_PROTOCOL.md](/Users/wcp/code/erp_data_pipeline/benchmark/erp_spatial_benchmark/ROTATION_PROTOCOL.md)
-- [rotation_protocol.py](/Users/wcp/code/erp_data_pipeline/benchmark/erp_spatial_benchmark/rotation_protocol.py)
-
-这里特别要区分：
-
-- `view_transform`：观察者转了
-- `rotation_consistency`：ERP 表示被水平重参数化了
-
-这两者不是一回事。
-
-## 当前 benchmark 与训练集的区别
-
-### 训练集
-
-训练集的目标是：
-
-- 大规模监督
-- 覆盖能力尽量广
-- 允许一定自动近似和自然语言变体
-- 一部分题可经由后处理重包装
-
-### benchmark
-
-benchmark 的目标是：
-
-- 低噪声
-- 稳定可评测
-- 解释性强
-- 尽量避免训练分布泄漏
-
-所以 benchmark 当前特点是：
-
-- benchmark-only 模板
-- 闭集 / 固定标签优先
-- 更严格过滤
-- review queue
-- scorer 直接支持 closed-form exact match
-- anchor 选择会过滤低区分度、高重复类别，例如：
-  - `tree`
-  - `window`
-  - `leaf`
-  - `branch`
-  - `foliage`
-  - `bush`
-  - `shrub`
-  - `plant`
-- 只有极区 / 高纬畸变相关题会使用“粗 label + 定位”的安全引用
-  - 若使用 box，则统一使用 `0-1000` 归一化后的 ERP box
-  - 其他任务仍保留 `reground_query / caption_brief` 风格引用，以保留语言-视觉对齐测试价值
-
-一句话说：
-
-- **训练集负责“教会模型”**
-- **benchmark 负责“确认模型到底学会了什么”**
-
-## 当前 benchmark 如何打分
-
-正式 scorer 在：
-
-- [evaluate_predictions.py](/Users/wcp/code/erp_data_pipeline/benchmark/erp_spatial_benchmark/evaluate_predictions.py)
-
-当前 headline metric 是：
-
-- `ability_group_macro_accuracy`
-
-其中 `referring_grounding_bfov` 不是普通多选题，而是直接预测 BFOV，并用
-seam-aware spherical BFOV IoU 进行评估；headline 上会把它阈值化为正确率，
-同时额外报告平均 IoU 和中心误差。
-
-同时报告：
-
-- `task_macro_score`
-- `overall`
-- `by_task`
-- `by_ability_group`
-- `by_diagnostic_slice`
-
-这样更符合 benchmark 的论文叙事：先看四类核心能力，再看具体任务和 slice。
-
-## 当前发布方式
-
-当前正式版 builder 采用 **单一公开 benchmark** 发布方式，所有标准答案公开。
-
-默认导出：
-
-- `benchmark_public.jsonl`
-- `benchmark_public_prompts.jsonl`
-- `benchmark_public_references.jsonl`
-
-以及辅助文件：
-
-- `candidate_pool.jsonl`
-- `review_queue.jsonl`
-- `summary.json`
-
-这样更符合你当前论文阶段的目标：
-
-- benchmark 全量公开
-- scorer 公开
-- 所有人都能直接复现同一套评测
-
-## 主入口
-
-如果你要基于 1k 高质量 ERP 图构建 benchmark：
-
-- [build_benchmark.py](/Users/wcp/code/erp_data_pipeline/benchmark/erp_spatial_benchmark/build_benchmark.py)
-
-最基本命令：
+### 1. 默认准备方式
 
 ```bash
-python3 benchmark/erp_spatial_benchmark/build_benchmark.py \
+python3 scripts/prepare_benchmarks.py \
+  --benchmarks osr-bench,panoenv,omnispatial,hstar-bench-erp
+```
+
+这会：
+
+- 准备原始数据
+- 生成各 benchmark 的本地 manifest
+
+### 2. 复用你已经下载好的 raw 数据
+
+如果服务器上 raw 数据已经在别的目录，使用：
+
+```bash
+python3 scripts/prepare_benchmarks.py \
+  --benchmarks osr-bench,panoenv,omnispatial,hstar-bench-erp \
+  --raw-dir osr-bench=/abs/path/to/OSR-Bench \
+  --raw-dir panoenv=/abs/path/to/PanoEnv \
+  --raw-dir omnispatial=/abs/path/to/OmniSpatial \
+  --raw-dir hstar-bench-erp=/abs/path/to/thinking_in_360
+```
+
+脚本会把这些外部 raw 目录软链接到当前仓库的标准 `data/<benchmark>/raw/` 位置，再生成 manifest。
+
+### 3. 只准备某一个 benchmark
+
+```bash
+python3 scripts/prepare_benchmarks.py --benchmarks osr-bench
+python3 scripts/prepare_benchmarks.py --benchmarks panoenv
+python3 scripts/prepare_benchmarks.py --benchmarks omnispatial
+python3 scripts/prepare_benchmarks.py --benchmarks hstar-bench-erp
+```
+
+### 4. 先看支持的 benchmark
+
+```bash
+python3 scripts/run_benchmark.py list
+```
+
+查看某一个 benchmark 的 registry 信息：
+
+```bash
+python3 scripts/run_benchmark.py describe osr-bench
+```
+
+---
+
+## 公开 benchmark：生成预测
+
+统一预测脚本是：
+
+- [scripts/predict_benchmark.py](/Users/wcp/code/erp_data_pipeline/benchmark/scripts/predict_benchmark.py)
+
+它当前支持：
+
+- `osr-bench`
+- `panoenv`
+- `omnispatial`
+- `hstar-bench-erp`
+
+### 1. 先用 mock 跑通
+
+```bash
+python3 scripts/predict_benchmark.py \
+  --benchmark osr-bench \
+  --model mock \
+  --references data/osr-bench/manifests/smoke_20.jsonl \
+  --predictions-out results/osr_predictions_smoke.jsonl \
+  --skip-download
+```
+
+### 2. 用 Transformers 跑本地/HF 模型
+
+例子：`PanoEnv + Qwen3-VL-4B`
+
+```bash
+python3 scripts/predict_benchmark.py \
+  --benchmark panoenv \
+  --model transformers-vlm \
+  --model-path /path/to/Qwen3-vl-4B \
+  --references data/panoenv/manifests/test.jsonl \
+  --predictions-out results/panoenv_predictions_qwen3vl4b.jsonl \
+  --torch-dtype bfloat16 \
+  --device-map auto \
+  --skip-download
+```
+
+### 3. 用 vLLM OpenAI 兼容接口
+
+```bash
+python3 scripts/predict_benchmark.py \
+  --benchmark osr-bench \
+  --model vllm-openai \
+  --model-name Qwen/Qwen3-VL-4B-Instruct \
+  --api-base http://127.0.0.1:8000/v1 \
+  --references data/osr-bench/manifests/smoke_20.jsonl \
+  --predictions-out results/osr_predictions_vllm.jsonl \
+  --skip-download
+```
+
+### 4. 用 OpenAI 风格 API
+
+```bash
+python3 scripts/predict_benchmark.py \
+  --benchmark omnispatial \
+  --model openai-api \
+  --model-name gpt-4.1 \
+  --references data/omnispatial/manifests/smoke_20.jsonl \
+  --predictions-out results/omnispatial_predictions_openai.jsonl \
+  --skip-download
+```
+
+### 5. 最常用参数
+
+- `--benchmark`
+- `--model`
+- `--model-path`
+- `--model-name`
+- `--api-base`
+- `--references`
+- `--predictions-out`
+- `--skip-download`
+- `--limit`
+
+如果不传 `--references`，脚本会默认使用该 benchmark 本地 `test` manifest。
+
+---
+
+## 公开 benchmark：评测打分
+
+统一评测脚本是：
+
+- [scripts/run_benchmark.py](/Users/wcp/code/erp_data_pipeline/benchmark/scripts/run_benchmark.py)
+
+### 1. 评测 OSR-Bench
+
+```bash
+python3 scripts/run_benchmark.py evaluate \
+  --benchmark osr-bench \
+  --references data/osr-bench/manifests/test.jsonl \
+  --predictions results/osr_predictions.jsonl
+```
+
+### 2. 评测 PanoEnv
+
+```bash
+python3 scripts/run_benchmark.py evaluate \
+  --benchmark panoenv \
+  --references data/panoenv/manifests/test.jsonl \
+  --predictions results/panoenv_predictions.jsonl
+```
+
+### 3. 评测 OmniSpatial
+
+```bash
+python3 scripts/run_benchmark.py evaluate \
+  --benchmark omnispatial \
+  --references data/omnispatial/manifests/test.jsonl \
+  --predictions results/omnispatial_predictions.jsonl
+```
+
+### 4. 评测 H*Bench-ERP
+
+```bash
+python3 scripts/run_benchmark.py evaluate \
+  --benchmark hstar-bench-erp \
+  --references data/hstar-bench-erp/manifests/test.jsonl \
+  --predictions results/hstar_erp_predictions.jsonl
+```
+
+### 5. 评测 H*Bench 原始版
+
+```bash
+python3 scripts/run_benchmark.py evaluate \
+  --benchmark hstar-bench \
+  --predictions /path/to/exported_metrics_or_predictions.jsonl
+```
+
+### 6. 评测 360Loc
+
+```bash
+python3 scripts/run_benchmark.py evaluate \
+  --benchmark 360loc \
+  --predictions /path/to/360loc_predictions.jsonl \
+  --coordinate-system cartesian
+```
+
+### 7. 评测 Habitat-Nav
+
+```bash
+python3 scripts/run_benchmark.py evaluate \
+  --benchmark habitat-nav \
+  --predictions /path/to/habitat_nav_metrics.jsonl
+```
+
+---
+
+## 公开 benchmark：最小 smoke 流程
+
+如果你只是想确认链路跑通，推荐：
+
+### OSR-Bench smoke
+
+生成预测：
+
+```bash
+python3 scripts/predict_benchmark.py \
+  --benchmark osr-bench \
+  --model mock \
+  --references data/osr-bench/manifests/smoke_20.jsonl \
+  --predictions-out results/osr_predictions_smoke.jsonl \
+  --skip-download
+```
+
+评测：
+
+```bash
+python3 scripts/run_benchmark.py evaluate \
+  --benchmark osr-bench \
+  --references data/osr-bench/manifests/smoke_20.jsonl \
+  --predictions results/osr_predictions_smoke.jsonl
+```
+
+---
+
+## 我们自己的 ERP benchmark
+
+当前正式版在：
+
+- [erp_spatial_benchmark](/Users/wcp/code/erp_data_pipeline/benchmark/erp_spatial_benchmark)
+
+它不是训练集，而是一个质量优先的、ERP-native 的空间 benchmark builder。
+
+### 当前测什么
+
+四类核心能力：
+
+1. `spherical_localization_and_panoramic_topology`
+   - `referring_grounding_bfov`
+   - `absolute_direction_mc`
+   - `relative_direction_mc`
+
+2. `viewpoint_conditioned_spatial_updating`
+   - `camera_rotation_transform_mc`
+   - `object_conditioned_reorientation_mc`
+
+3. `observer_centered_3d_layout_understanding`
+   - `observer_distance_choice`
+   - `relative_3d_position_mc`
+
+4. `erp_representation_understanding`
+   - `seam_continuity_mc`
+   - `polar_shape_recovery_mc`
+
+### 构建命令
+
+```bash
+python3 erp_spatial_benchmark/build_benchmark.py \
   --input-root /path/to/erp_benchmark_metadata_root \
   --output-dir /path/to/erp_spatial_benchmark_out \
   --target-public-per-task 250 \
   --seed 20260327
 ```
 
-## 最终建议
+### 输出文件
 
-现在最合理的理解方式是：
+最重要的文件是：
 
-1. 公开 benchmark 适配层负责外部对比
-2. `erp_spatial_benchmark` 负责论文核心验证
+- `benchmark_public_prompts.jsonl`
+  - 给模型做题
+- `benchmark_public_references.jsonl`
+  - 给评测器判分
+- `summary.json`
+  - 看每个 task 最终有多少题
 
-其中论文主 benchmark 的故事应该围绕这四件事展开：
+中间文件：
 
-- ERP 球面定位与全景拓扑
-- 视角变化下的空间更新
-- observer-centered 3D 布局理解
-- ERP 表示特性理解
+- `candidate_pool.jsonl`
+- `review_queue.jsonl`
+- `derived_metadata/`
+- `skipped_invalid_metadata.jsonl`
+
+### 如何拿它做推理
+
+你的模型应读取：
+
+- `image_path`
+- `question`
+- `options`（如果是多选题）
+
+然后输出：
+
+```json
+{"item_id": "...", "prediction": "A"}
+```
+
+对于 `referring_grounding_bfov`，输出：
+
+```json
+{"item_id": "...", "prediction": "[yaw, pitch, x_fov, y_fov]"}
+```
+
+### 如何评测
+
+```bash
+python3 erp_spatial_benchmark/evaluate_predictions.py \
+  --predictions /path/to/predictions.jsonl \
+  --references /path/to/erp_spatial_benchmark_out/benchmark_public_references.jsonl \
+  --report /path/to/report.json
+```
+
+### 质量筛选策略
+
+这套自建 benchmark 的高质量筛选策略已经单独整理在：
+
+- [erp_spatial_benchmark/README.md](/Users/wcp/code/erp_data_pipeline/benchmark/erp_spatial_benchmark/README.md)
+
+里面有：
+
+- 公共筛选规则
+- 每个任务的特殊过滤规则
+- seam / polar 的 derived stress 生成策略
+
+---
+
+## 自建 benchmark 与训练集的区别
+
+训练集是为了“教会模型”，benchmark 是为了“确认模型到底学会了什么”。
+
+所以 benchmark 当前默认是：
+
+- benchmark-only templates
+- 质量优先
+- 闭集/固定标签优先
+- 更严格过滤
+- review queue
+- scorer 公开
+
+而不是追求训练式的大规模自动扩增。
+
+---
+
+## 推荐理解方式
+
+这个仓库目前最合理的定位是：
+
+1. **公开 benchmark 适配层**
+   - 用于外部对比、基线复现、横向评测
+2. **`erp_spatial_benchmark`**
+   - 用于你们论文和主项目的 ERP-native 核心验证
+
+如果你是要跑已有 benchmark，对应看上面的：
+
+- `prepare`
+- `predict`
+- `evaluate`
+
+如果你是要构建和评测你们自己的正式 benchmark，对应看：
+
+- [erp_spatial_benchmark](/Users/wcp/code/erp_data_pipeline/benchmark/erp_spatial_benchmark)
