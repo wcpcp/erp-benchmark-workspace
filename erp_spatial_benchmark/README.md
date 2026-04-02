@@ -171,12 +171,15 @@ challenge cases instead of perspective-like easy cases:
   - `back-right`
   - `back`
   - `back-left`
-- the effective sector margin must be at least `20°`
+- the effective sector margin must be at least `15°`
 - immediate neighboring distractors such as `left` versus `front-left` are no
   longer used
 - distractors are drawn from more clearly separated sectors so the task tests
   true 360-degree orientation understanding rather than simple image-left /
   image-right heuristics
+- if natural candidates are insufficient, the builder may synthesize additional
+  absolute-direction stress items by yaw-rotating high-quality targets into one
+  of the rear challenge sectors
 
 When a scene contains multiple similar instances of the same category, the
 builder now disambiguates only when needed:
@@ -289,11 +292,13 @@ These rules apply broadly across the benchmark before task-specific logic runs.
 
 - Target must pass the shared direction-task size filter.
 - Only `back-right`, `back`, and `back-left` are kept as valid correct sectors.
-- The effective sector margin must be at least `20°` after accounting for the
+- The effective sector margin must be at least `15°` after accounting for the
   target BFOV width.
 - Immediate neighboring sectors are excluded from distractors so linguistically
   plausible but low-value alternatives such as `left` versus `front-left` do
   not appear together.
+- If the natural candidate pool is underfilled, derived yaw rotations are used
+  to supplement rear-sector challenge cases.
 
 #### `relative_direction_mc`
 

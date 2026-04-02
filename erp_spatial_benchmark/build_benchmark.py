@@ -45,6 +45,11 @@ ABSOLUTE_DIRECTION_CHALLENGE_SECTORS = {
     "back",
     "back-left",
 }
+ABSOLUTE_DIRECTION_CHALLENGE_CENTERS = {
+    "back-right": 135.0,
+    "back": 180.0,
+    "back-left": 225.0,
+}
 PANORAMIC_RELATION_LABELS = ["right", "back-right", "opposite", "back-left", "left"]
 REORIENTED_RELATION_LABELS = ["right", "back-right", "behind", "back-left", "left"]
 SHAPE_FALLBACK_POOL = [
@@ -95,13 +100,14 @@ ENTITY_LABEL_BLOCKLIST_SUBSTRINGS = (
 )
 MIN_DETECTION_SCORE = 0.65
 MIN_REGROUND_SCORE = 0.65
-ABSOLUTE_DIRECTION_MIN_MARGIN_DEG = 20.0
+ABSOLUTE_DIRECTION_MIN_MARGIN_DEG = 15.0
 RELATION_MIN_MARGIN_DEG = 15.0
 DIRECTION_MAX_X_FOV_DEG = 35.0
 DIRECTION_MAX_Y_FOV_DEG = 30.0
 DIRECTION_MAX_AREA_RATIO = 0.08
 DERIVED_MIN_SEAM_CANDIDATES = 40
 DERIVED_MIN_POLAR_CANDIDATES = 40
+DERIVED_MIN_ABSOLUTE_DIRECTION_CANDIDATES = 40
 DERIVED_ROTATION_DIRNAME = "derived_rotations"
 DERIVED_MAX_PER_SCENE_PER_TASK = 3
 POLAR_TARGET_LAT_MIN_DEG = 50.0
@@ -1211,6 +1217,19 @@ def choose_pitch_shift_for_polar(entity: Entity) -> Optional[float]:
     return None if best is None else best[1]
 
 
+def choose_yaw_shift_for_absolute_direction(entity: Entity) -> float:
+    yaw = yaw_deg_360(entity)
+    centers = sorted(
+        ABSOLUTE_DIRECTION_CHALLENGE_CENTERS.values(),
+        key=lambda center: (
+            abs(wrapped_delta_deg(yaw - center)),
+            abs(center - 180.0),
+        ),
+    )
+    target_center = centers[0]
+    return wrapped_delta_deg(yaw - target_center)
+
+
 def augment_representation_stress_candidates(
     scenes: Sequence[SceneMetadata],
     all_candidates: List[Dict[str, Any]],
@@ -1243,6 +1262,47 @@ def augment_representation_stress_candidates(
             split_lock=info.split_lock,
         )
         return True
+
+    absolute_needed = max(
+        0,
+        max(DERIVED_MIN_ABSOLUTE_DIRECTION_CANDIDATES, target_public_per_task)
+        - by_task.get("absolute_direction_mc", 0),
+    )
+    if absolute_needed > 0:
+        produced = 0
+        for scene in scenes:
+            if produced >= absolute_needed:
+                break
+            produced_for_scene = 0
+            used_target_ids: set[str] = set()
+            info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
+            anchors = [
+                item
+                for item in select_anchor_entities(scene, max_anchors=8)
+                if benchmark_anchor_eligible(item["entity"])
+                and reference_is_resolvable(scene, item["entity"])
+                and direction_task_entity_eligible(item["entity"])
+            ]
+            for anchor_payload in anchors:
+                if produced >= absolute_needed or produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
+                    break
+                target = anchor_payload["entity"]
+                if target.entity_id in used_target_ids:
+                    continue
+                shift = choose_yaw_shift_for_absolute_direction(target)
+                suffix = f"absolute_yaw_{int(round(shift))}_{target.entity_id}"
+                derived_scene = build_rotated_scene(scene, yaw_shift_deg=shift, suffix=suffix, output_dir=output_dir)
+                if derived_scene is None:
+                    continue
+                derived_target = find_entity(derived_scene, target.entity_id)
+                if derived_target is None:
+                    continue
+                quality = float(score_entity(derived_target, Counter(e.label for e in derived_scene.entities), derived_scene))
+                row = build_absolute_direction_mc(derived_scene, derived_target, 0, quality)
+                if add_row(row, derived_scene, info):
+                    produced += 1
+                    used_target_ids.add(target.entity_id)
+                    produced_for_scene += 1
 
     seam_needed = max(0, max(DERIVED_MIN_SEAM_CANDIDATES, target_public_per_task) - by_task.get("seam_continuity_mc", 0))
     if seam_needed > 0:
