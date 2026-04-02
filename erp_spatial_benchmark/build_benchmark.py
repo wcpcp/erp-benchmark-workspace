@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -12,6 +13,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
+
+import numpy as np
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -72,6 +75,29 @@ ANCHOR_LABEL_BLOCKLIST_SUBSTRINGS = (
     "shrub",
     "plant",
 )
+ENTITY_LABEL_BLOCKLIST_SUBSTRINGS = (
+    "tree",
+    "window",
+    "leaf",
+    "branch",
+    "foliage",
+    "bush",
+    "shrub",
+    "plant",
+    "grass",
+    "sky",
+    "cloud",
+)
+MIN_DETECTION_SCORE = 0.65
+MIN_REGROUND_SCORE = 0.65
+ABSOLUTE_DIRECTION_MIN_MARGIN_DEG = 15.0
+RELATION_MIN_MARGIN_DEG = 15.0
+DIRECTION_MAX_X_FOV_DEG = 35.0
+DIRECTION_MAX_Y_FOV_DEG = 30.0
+DIRECTION_MAX_AREA_RATIO = 0.08
+DERIVED_MIN_SEAM_CANDIDATES = 40
+DERIVED_MIN_POLAR_CANDIDATES = 40
+DERIVED_ROTATION_DIRNAME = "derived_rotations"
 
 TASK_SPECS: Dict[str, Dict[str, Any]] = {
     "referring_grounding_bfov": {
@@ -187,6 +213,7 @@ def main() -> int:
     all_candidates: List[Dict[str, Any]] = []
     scene_infos: Dict[str, SceneSideInfo] = {}
     skipped_invalid_metadata: List[Dict[str, Any]] = []
+    scenes: List[SceneMetadata] = []
     split_seed = int(args.seed)
 
     for idx, metadata_path in enumerate(scene_paths, start=1):
@@ -205,10 +232,23 @@ def main() -> int:
             continue
         info = build_scene_side_info(scene, scene_manifest)
         scene_infos[scene.scene_id] = info
+        scenes.append(scene)
         candidates = generate_scene_candidates(scene)
         all_candidates.extend(candidates)
         if idx % 25 == 0 or idx == len(scene_paths):
             print(json.dumps({"stage": "candidates", "processed_scenes": idx, "candidate_count": len(all_candidates)}, ensure_ascii=False))
+
+    derived_rows = augment_representation_stress_candidates(
+        scenes,
+        all_candidates,
+        scene_infos,
+        output_dir,
+        target_public_per_task=int(args.target_public_per_task),
+        seed=split_seed,
+    )
+    if derived_rows:
+        all_candidates.extend(derived_rows)
+        print(json.dumps({"stage": "derived_representation_stress", "added_candidates": len(derived_rows), "candidate_count": len(all_candidates)}, ensure_ascii=False))
 
     public_selected = select_split_pool(
         all_candidates,
@@ -351,9 +391,16 @@ def generate_scene_candidates(scene: SceneMetadata) -> List[Dict[str, Any]]:
 
 
 def benchmark_entity_eligible(entity: Entity) -> bool:
-    if not entity.verified_semantics:
+    label = normalize_phrase(entity.label)
+    if not label or label in {"unknown", "object"}:
         return False
-    if float(entity.confidence or 0.0) < 0.55:
+    if any(token in label for token in ENTITY_LABEL_BLOCKLIST_SUBSTRINGS):
+        return False
+    det_score = float(entity.best_score or entity.confidence or 0.0)
+    if det_score < MIN_DETECTION_SCORE:
+        return False
+    reground_score = float(entity.local_reground_pred_score or 0.0)
+    if reground_score < MIN_REGROUND_SCORE:
         return False
     if float(entity.area_ratio or 0.0) <= 0.0004:
         return False
@@ -378,6 +425,69 @@ def descriptive_entity_ref(entity: Entity) -> str:
         or entity.semantic.caption_brief
         or f"the {entity.label}"
     )
+
+
+def entity_has_large_extent(entity: Entity, *, x_limit: float, y_limit: float, area_limit: float) -> bool:
+    bfov = entity.resolved_bfov
+    if bfov is None:
+        return True
+    x_fov = abs(float(bfov[2]))
+    y_fov = abs(float(bfov[3]))
+    return x_fov > x_limit or y_fov > y_limit or float(entity.area_ratio or 0.0) > area_limit
+
+
+def direction_task_entity_eligible(entity: Entity) -> bool:
+    if not benchmark_entity_eligible(entity):
+        return False
+    return not entity_has_large_extent(
+        entity,
+        x_limit=DIRECTION_MAX_X_FOV_DEG,
+        y_limit=DIRECTION_MAX_Y_FOV_DEG,
+        area_limit=DIRECTION_MAX_AREA_RATIO,
+    )
+
+
+def ref_has_spatial_hint(text: str) -> bool:
+    normalized = normalize_phrase(text)
+    hint_tokens = (
+        "left",
+        "right",
+        "front",
+        "back",
+        "center",
+        "middle",
+        "upper",
+        "lower",
+        "top",
+        "bottom",
+        "near",
+    )
+    return any(token in normalized for token in hint_tokens)
+
+
+def duplicate_label_count(scene: SceneMetadata, entity: Entity) -> int:
+    label = normalize_phrase(entity.label)
+    return sum(1 for other in scene.entities if normalize_phrase(other.label) == label)
+
+
+def coarse_sector_hint(entity: Entity) -> str:
+    yaw = yaw_deg_360(entity)
+    if 45.0 <= yaw < 135.0:
+        return "right side"
+    if 135.0 <= yaw < 225.0:
+        return "back side"
+    if 225.0 <= yaw < 315.0:
+        return "left side"
+    return "front side"
+
+
+def contextual_entity_ref(scene: SceneMetadata, entity: Entity) -> str:
+    ref = descriptive_entity_ref(entity)
+    if duplicate_label_count(scene, entity) <= 1:
+        return ref
+    if ref_has_spatial_hint(ref):
+        return ref
+    return f"{ref} near the {coarse_sector_hint(entity)}"
 
 
 def normalized_bbox_1000(entity: Entity, scene: SceneMetadata) -> Optional[Tuple[int, int, int, int]]:
@@ -466,7 +576,7 @@ def absolute_sector_8way(entity: Entity) -> str:
 
 def absolute_sector_margin(entity: Entity) -> float:
     yaw = yaw_deg_360(entity) % 45.0
-    return min(abs(yaw - 22.5), abs(yaw - 0.0), abs(yaw - 45.0))
+    return min(yaw, 45.0 - yaw)
 
 
 def panoramic_relation_from_delta(delta_yaw: float, *, opposite_label: str) -> Optional[str]:
@@ -497,6 +607,14 @@ def camera_rotation_relation(entity: Entity, rotation_direction: str, angle_deg:
 
 def closest_boundary_margin(delta_yaw: float, boundaries: Sequence[float]) -> float:
     return min(abs(delta_yaw - boundary) for boundary in boundaries)
+
+
+def effective_direction_margin(entity: Entity, raw_margin: float) -> float:
+    bfov = entity.resolved_bfov
+    if bfov is None:
+        return raw_margin
+    x_half = abs(float(bfov[2])) / 2.0
+    return raw_margin - x_half
 
 
 def shape_value(entity: Entity) -> Optional[str]:
@@ -708,10 +826,336 @@ def benchmark_item(
     }
 
 
+def find_entity(scene: SceneMetadata, entity_id: str) -> Optional[Entity]:
+    for entity in scene.entities:
+        if entity.entity_id == entity_id:
+            return entity
+    return None
+
+
+def yaw360_to_signed(yaw_deg: float) -> float:
+    return wrapped_delta_deg(float(yaw_deg) % 360.0)
+
+
+def bbox_dims(entity: Entity) -> Tuple[float, float]:
+    if len(entity.bbox_erp) != 4:
+        return (0.0, 0.0)
+    x1, y1, x2, y2 = entity.bbox_erp
+    return (max(1.0, float(x2) - float(x1)), max(1.0, float(y2) - float(y1)))
+
+
+def yaw_to_erp_x(yaw_deg: float, width: int) -> float:
+    return ((float(yaw_deg) % 360.0) / 360.0) * float(width)
+
+
+def pitch_to_erp_y(pitch_deg: float, height: int) -> float:
+    return ((90.0 - float(pitch_deg)) / 180.0) * float(height)
+
+
+def spherical_vector_from_yaw_pitch(yaw_deg: float, pitch_deg: float) -> np.ndarray:
+    lon = math.radians(yaw360_to_signed(yaw_deg))
+    lat = math.radians(-float(pitch_deg))
+    return np.array(
+        [
+            math.cos(lat) * math.sin(lon),
+            math.sin(lat),
+            math.cos(lat) * math.cos(lon),
+        ],
+        dtype=np.float64,
+    )
+
+
+def yaw_pitch_from_vector(vec: np.ndarray) -> Tuple[float, float]:
+    x, y, z = [float(v) for v in vec]
+    lon = math.degrees(math.atan2(x, z))
+    lat = math.degrees(math.asin(max(-1.0, min(1.0, y))))
+    return yaw360_to_signed(lon), -lat
+
+
+def rotate_vector_pitch(vec: np.ndarray, pitch_deg: float) -> np.ndarray:
+    rad = math.radians(float(pitch_deg))
+    rot = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, math.cos(rad), -math.sin(rad)],
+            [0.0, math.sin(rad), math.cos(rad)],
+        ],
+        dtype=np.float64,
+    )
+    return rot @ vec
+
+
+def rotate_yaw_pitch(yaw_deg: float, pitch_deg: float, *, yaw_shift_deg: float = 0.0, pitch_shift_deg: float = 0.0) -> Tuple[float, float]:
+    if abs(pitch_shift_deg) < 1e-6:
+        return yaw360_to_signed(float(yaw_deg) - float(yaw_shift_deg)), float(pitch_deg)
+    vec = spherical_vector_from_yaw_pitch(yaw_deg, pitch_deg)
+    if abs(yaw_shift_deg) > 1e-6:
+        yaw_rad = math.radians(float(yaw_shift_deg))
+        yaw_rot = np.array(
+            [
+                [math.cos(yaw_rad), 0.0, math.sin(yaw_rad)],
+                [0.0, 1.0, 0.0],
+                [-math.sin(yaw_rad), 0.0, math.cos(yaw_rad)],
+            ],
+            dtype=np.float64,
+        )
+        vec = yaw_rot.T @ vec
+    vec = rotate_vector_pitch(vec, pitch_shift_deg)
+    return yaw_pitch_from_vector(vec)
+
+
+def write_yaw_shifted_erp_image(src_path: Path, dst_path: Path, yaw_shift_deg: float) -> None:
+    from PIL import Image
+
+    image = Image.open(src_path).convert("RGB")
+    width = image.size[0]
+    shift_px = int(round((float(yaw_shift_deg) / 360.0) * width))
+    rolled = np.roll(np.asarray(image), -shift_px, axis=1)
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(rolled).save(dst_path)
+
+
+def write_pitch_rotated_erp_image(src_path: Path, dst_path: Path, pitch_shift_deg: float) -> None:
+    from PIL import Image
+
+    image = np.asarray(Image.open(src_path).convert("RGB"))
+    height, width = image.shape[:2]
+    xs, ys = np.meshgrid(np.arange(width, dtype=np.float32), np.arange(height, dtype=np.float32))
+    lon = (xs / float(width)) * (2.0 * math.pi) - math.pi
+    lat = (math.pi / 2.0) - (ys / float(height)) * math.pi
+    x = np.cos(lat) * np.sin(lon)
+    y = np.sin(lat)
+    z = np.cos(lat) * np.cos(lon)
+    vectors = np.stack([x, y, z], axis=-1).reshape(-1, 3)
+
+    rad = math.radians(float(pitch_shift_deg))
+    inv_rot = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, math.cos(-rad), -math.sin(-rad)],
+            [0.0, math.sin(-rad), math.cos(-rad)],
+        ],
+        dtype=np.float64,
+    )
+    source_vectors = vectors @ inv_rot.T
+    src_x = source_vectors[:, 0]
+    src_y = np.clip(source_vectors[:, 1], -1.0, 1.0)
+    src_z = source_vectors[:, 2]
+    src_lon = np.arctan2(src_x, src_z)
+    src_lat = np.arcsin(src_y)
+    map_x = (((src_lon + math.pi) / (2.0 * math.pi)) * width).astype(np.float32).reshape(height, width)
+    map_y = (((math.pi / 2.0 - src_lat) / math.pi) * height).astype(np.float32).reshape(height, width)
+    x0 = np.floor(map_x).astype(np.int32) % width
+    x1 = (x0 + 1) % width
+    y0 = np.clip(np.floor(map_y).astype(np.int32), 0, height - 1)
+    y1 = np.clip(y0 + 1, 0, height - 1)
+    wx = map_x - np.floor(map_x)
+    wy = map_y - np.floor(map_y)
+
+    top_left = image[y0, x0]
+    top_right = image[y0, x1]
+    bottom_left = image[y1, x0]
+    bottom_right = image[y1, x1]
+    top = top_left * (1.0 - wx[..., None]) + top_right * wx[..., None]
+    bottom = bottom_left * (1.0 - wx[..., None]) + bottom_right * wx[..., None]
+    rotated = top * (1.0 - wy[..., None]) + bottom * wy[..., None]
+    rotated = np.clip(rotated, 0, 255).astype(np.uint8)
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(rotated).save(dst_path)
+
+
+def transformed_bbox(entity: Entity, scene: SceneMetadata, yaw_deg: float, pitch_deg: float) -> Tuple[List[float], bool]:
+    width = int(scene.erp_width or 0)
+    height = int(scene.erp_height or 0)
+    if width <= 0 or height <= 0:
+        return list(entity.bbox_erp), False
+    box_w, box_h = bbox_dims(entity)
+    cx = yaw_to_erp_x(yaw_deg, width)
+    cy = pitch_to_erp_y(pitch_deg, height)
+    x1 = cx - box_w / 2.0
+    x2 = cx + box_w / 2.0
+    y1 = max(0.0, cy - box_h / 2.0)
+    y2 = min(float(height), cy + box_h / 2.0)
+    seam_cross = x1 < 0.0 or x2 > float(width)
+    if seam_cross:
+        if x1 < 0.0:
+            return [0.0, y1, min(float(width), x2), y2], True
+        return [max(0.0, x1), y1, float(width), y2], True
+    return [max(0.0, x1), y1, min(float(width), x2), y2], False
+
+
+def derived_image_path(scene: SceneMetadata, suffix: str) -> Path:
+    original = Path(scene.erp_image_path)
+    return original.parent / f"{original.stem}__{suffix}{original.suffix}"
+
+
+def build_rotated_scene(
+    scene: SceneMetadata,
+    *,
+    yaw_shift_deg: float = 0.0,
+    pitch_shift_deg: float = 0.0,
+    suffix: str,
+    output_dir: Path,
+) -> Optional[SceneMetadata]:
+    raw = copy.deepcopy(scene.raw)
+    raw["scene_id"] = f"{scene.scene_id}__{suffix}"
+    rotated_image = derived_image_path(scene, suffix)
+    if not Path(scene.erp_image_path).exists():
+        return None
+    if abs(pitch_shift_deg) > 1e-6:
+        write_pitch_rotated_erp_image(Path(scene.erp_image_path), rotated_image, pitch_shift_deg)
+    else:
+        write_yaw_shifted_erp_image(Path(scene.erp_image_path), rotated_image, yaw_shift_deg)
+    raw["erp_image_path"] = str(rotated_image)
+    raw["image_path"] = str(rotated_image)
+
+    transformed_entities: List[Dict[str, Any]] = []
+    for entity in scene.raw.get("entities", []):
+        item = copy.deepcopy(entity)
+        bfov = item.get("bfov", {}) or {}
+        yaw_old = float(bfov.get("yaw_deg", math.degrees(float(item.get("lon_lat", [0.0, 0.0])[0]))))
+        pitch_old = float(bfov.get("pitch_deg", -math.degrees(float(item.get("lon_lat", [0.0, 0.0])[1]))))
+        yaw_new, pitch_new = rotate_yaw_pitch(
+            yaw_old,
+            pitch_old,
+            yaw_shift_deg=yaw_shift_deg,
+            pitch_shift_deg=pitch_shift_deg,
+        )
+        lat_new = -pitch_new
+        lon_rad = math.radians(yaw_new)
+        lat_rad = math.radians(lat_new)
+        item["lon_lat"] = [lon_rad, lat_rad]
+        item.setdefault("bfov", {})
+        item["bfov"]["yaw_deg"] = yaw_new
+        item["bfov"]["pitch_deg"] = pitch_new
+        bbox, seam_cross = transformed_bbox(Entity.from_dict(item), scene, yaw_new % 360.0, pitch_new)
+        item["bbox_erp"] = bbox
+        item["seam_crossing_flag"] = bool(item.get("seam_crossing_flag")) or seam_cross
+        item["pole_proximity_flag"] = bool(item.get("pole_proximity_flag")) or abs(lat_new) >= 60.0
+        transformed_entities.append(item)
+
+    raw["entities"] = transformed_entities
+    derived_metadata_dir = output_dir / "derived_metadata"
+    derived_metadata_dir.mkdir(parents=True, exist_ok=True)
+    metadata_path = derived_metadata_dir / f"{raw['scene_id']}.json"
+    metadata_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+    return SceneMetadata.from_dict(raw)
+
+
+def choose_pitch_shift_for_polar(entity: Entity) -> Optional[float]:
+    bfov = entity.resolved_bfov
+    if bfov is None:
+        return None
+    yaw_deg = float(bfov[0])
+    pitch_deg = float(bfov[1])
+    candidates = [75.0, 60.0, 45.0, -45.0, -60.0, -75.0]
+    best: Optional[Tuple[float, float]] = None
+    for shift in candidates:
+        _, new_pitch = rotate_yaw_pitch(yaw_deg, pitch_deg, pitch_shift_deg=shift)
+        lat_abs = abs(-new_pitch)
+        if 65.0 <= lat_abs <= 82.0:
+            score = abs(lat_abs - 72.0)
+            if best is None or score < best[0]:
+                best = (score, shift)
+    return None if best is None else best[1]
+
+
+def augment_representation_stress_candidates(
+    scenes: Sequence[SceneMetadata],
+    all_candidates: List[Dict[str, Any]],
+    scene_infos: Dict[str, SceneSideInfo],
+    output_dir: Path,
+    *,
+    target_public_per_task: int,
+    seed: int,
+) -> List[Dict[str, Any]]:
+    by_task = Counter(row["task_id"] for row in all_candidates)
+    derived_rows: List[Dict[str, Any]] = []
+    existing_ids = {row["item_id"] for row in all_candidates}
+
+    def add_row(row: Optional[Dict[str, Any]], derived_scene: SceneMetadata, info: SceneSideInfo) -> bool:
+        if not row or row["item_id"] in existing_ids:
+            return False
+        row["diagnostic_slices"] = sorted(set(list(row.get("diagnostic_slices", [])) + ["derived_rotation"]))
+        row.setdefault("metadata", {})
+        row["metadata"]["derived_rotation"] = {
+            "source_scene_id": info.scene_id,
+            "derived_scene_id": derived_scene.scene_id,
+        }
+        derived_rows.append(row)
+        existing_ids.add(row["item_id"])
+        scene_infos[derived_scene.scene_id] = SceneSideInfo(
+            scene_id=derived_scene.scene_id,
+            group_id=f"{info.group_id}__derived",
+            source_id=info.source_id,
+            domain=info.domain,
+            split_lock=info.split_lock,
+        )
+        return True
+
+    seam_needed = max(0, max(DERIVED_MIN_SEAM_CANDIDATES, target_public_per_task) - by_task.get("seam_continuity_mc", 0))
+    if seam_needed > 0:
+        produced = 0
+        for scene in scenes:
+            if produced >= seam_needed:
+                break
+            info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
+            anchors = [item for item in select_anchor_entities(scene, max_anchors=8) if benchmark_anchor_eligible(item["entity"])]
+            for anchor_payload in anchors:
+                if produced >= seam_needed:
+                    break
+                target = anchor_payload["entity"]
+                shift = wrapped_delta_deg(yaw_deg_360(target) - 358.0)
+                suffix = f"seam_yaw_{int(round(shift))}_{target.entity_id}"
+                derived_scene = build_rotated_scene(scene, yaw_shift_deg=shift, suffix=suffix, output_dir=output_dir)
+                if derived_scene is None:
+                    continue
+                derived_target = find_entity(derived_scene, target.entity_id)
+                if derived_target is None:
+                    continue
+                quality = float(score_entity(derived_target, Counter(e.label for e in derived_scene.entities), derived_scene))
+                for row in build_seam_continuity_items(derived_scene, derived_target, [], 0, quality):
+                    if add_row(row, derived_scene, info):
+                        produced += 1
+                        if produced >= seam_needed:
+                            break
+
+    polar_needed = max(0, max(DERIVED_MIN_POLAR_CANDIDATES, target_public_per_task) - by_task.get("polar_shape_recovery_mc", 0))
+    if polar_needed > 0:
+        produced = 0
+        for scene in scenes:
+            if produced >= polar_needed:
+                break
+            info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
+            anchors = [item for item in select_anchor_entities(scene, max_anchors=8) if benchmark_anchor_eligible(item["entity"])]
+            for anchor_payload in anchors:
+                if produced >= polar_needed:
+                    break
+                target = anchor_payload["entity"]
+                if shape_value(target) is None:
+                    continue
+                shift = choose_pitch_shift_for_polar(target)
+                if shift is None:
+                    continue
+                suffix = f"polar_pitch_{int(round(shift))}_{target.entity_id}"
+                derived_scene = build_rotated_scene(scene, pitch_shift_deg=shift, suffix=suffix, output_dir=output_dir)
+                if derived_scene is None:
+                    continue
+                derived_target = find_entity(derived_scene, target.entity_id)
+                if derived_target is None:
+                    continue
+                quality = float(score_entity(derived_target, Counter(e.label for e in derived_scene.entities), derived_scene))
+                row = build_polar_shape_recovery(derived_scene, derived_target, 0, quality)
+                if add_row(row, derived_scene, info):
+                    produced += 1
+
+    return derived_rows
+
+
 def build_referring_grounding_bfov(scene: SceneMetadata, target: Entity, anchors: Sequence[Dict[str, Any]], anchor_index: int, quality: float) -> Optional[Dict[str, Any]]:
     if target.resolved_bfov is None:
         return None
-    target_ref = descriptive_entity_ref(target)
+    target_ref = contextual_entity_ref(scene, target)
     question = pick_template("referring_grounding_bfov", f"{scene.scene_id}:{target.entity_id}").format(target_ref=target_ref)
     answer_text = bfov_text(target)
     return benchmark_item(
@@ -734,14 +1178,16 @@ def build_referring_grounding_bfov(scene: SceneMetadata, target: Entity, anchors
 
 
 def build_absolute_direction_mc(scene: SceneMetadata, target: Entity, anchor_index: int, quality: float) -> Optional[Dict[str, Any]]:
+    if not direction_task_entity_eligible(target):
+        return None
     sector = absolute_sector_8way(target)
-    margin = absolute_sector_margin(target)
-    if margin < 8.0:
+    margin = effective_direction_margin(target, absolute_sector_margin(target))
+    if margin < ABSOLUTE_DIRECTION_MIN_MARGIN_DEG:
         return None
     neighbors = sector_distractors(sector)
     options = [sector] + neighbors[:3]
     choices = choice_rows(options)
-    target_ref = descriptive_entity_ref(target)
+    target_ref = contextual_entity_ref(scene, target)
     question = pick_template("absolute_direction_mc", f"{scene.scene_id}:{target.entity_id}").format(target_ref=target_ref)
     return benchmark_item(
         scene=scene,
@@ -956,10 +1402,10 @@ def build_seam_nearest_neighbor_mc(scene: SceneMetadata, target: Entity, quality
 
     option_entities = [correct, lure] + distractors
     item_key = f"{scene.scene_id}:seam_nearest_neighbor:{target.entity_id}:{correct.entity_id}:{lure.entity_id}"
-    target_ref = descriptive_entity_ref(target)
-    correct_ref = descriptive_entity_ref(correct)
-    lure_ref = descriptive_entity_ref(lure)
-    distractor_refs = [descriptive_entity_ref(entity) for entity in distractors]
+    target_ref = contextual_entity_ref(scene, target)
+    correct_ref = contextual_entity_ref(scene, correct)
+    lure_ref = contextual_entity_ref(scene, lure)
+    distractor_refs = [contextual_entity_ref(scene, entity) for entity in distractors]
     option_texts = [correct_ref, lure_ref] + distractor_refs
     question = pick_variant(
         SEAM_SUBTYPE_TEMPLATES["nearest_neighbor"],
@@ -1009,8 +1455,8 @@ def build_seam_relative_direction_mc(scene: SceneMetadata, target: Entity, quali
         return None
     correct = bundles["correct"]
     item_key = f"{scene.scene_id}:seam_relative_direction:{target.entity_id}:{correct.entity_id}"
-    neighbor_ref = descriptive_entity_ref(correct)
-    target_ref = descriptive_entity_ref(target)
+    neighbor_ref = contextual_entity_ref(scene, correct)
+    target_ref = contextual_entity_ref(scene, target)
     question = pick_variant(
         SEAM_SUBTYPE_TEMPLATES["relative_direction"],
         f"{item_key}:question",
@@ -1054,7 +1500,7 @@ def build_seam_dedup_count_mc(scene: SceneMetadata, target: Entity, quality: flo
     if not bool(target.seam_crossing_flag):
         return None
     item_key = f"{scene.scene_id}:seam_dedup_count:{target.entity_id}"
-    target_ref = descriptive_entity_ref(target)
+    target_ref = contextual_entity_ref(scene, target)
     question = pick_variant(
         SEAM_SUBTYPE_TEMPLATES["dedup_count"],
         f"{item_key}:question",
@@ -1095,7 +1541,7 @@ def build_seam_structure_continuity_mc(scene: SceneMetadata, target: Entity, qua
     if not seam_structure_like(target):
         return None
     item_key = f"{scene.scene_id}:seam_structure_continuity:{target.entity_id}"
-    target_ref = descriptive_entity_ref(target)
+    target_ref = contextual_entity_ref(scene, target)
     question = pick_variant(
         SEAM_SUBTYPE_TEMPLATES["structure_continuity"],
         f"{item_key}:question",
@@ -1135,7 +1581,7 @@ def build_seam_same_entity_mc(scene: SceneMetadata, target: Entity, quality: flo
     if side is None or not bool(target.seam_crossing_flag):
         return None
     item_key = f"{scene.scene_id}:seam_same_entity:{target.entity_id}"
-    target_ref = descriptive_entity_ref(target)
+    target_ref = contextual_entity_ref(scene, target)
     question = pick_variant(
         SEAM_SUBTYPE_TEMPLATES["same_entity_judgement"],
         f"{item_key}:question",
@@ -1187,16 +1633,21 @@ def build_seam_continuity_items(
 
 
 def build_relative_direction_mc(scene: SceneMetadata, reference: Entity, target: Entity, anchor_index: int, partner_index: int, quality: float) -> Optional[Dict[str, Any]]:
+    if not direction_task_entity_eligible(reference) or not direction_task_entity_eligible(target):
+        return None
     delta = wrapped_delta_deg(yaw_deg_360(target) - yaw_deg_360(reference))
     relation = panoramic_relation_from_delta(delta, opposite_label="opposite")
     if relation is None:
         return None
-    margin = closest_boundary_margin(abs(delta), [15.0, 90.0, 150.0, 180.0])
-    if margin < 8.0:
+    raw_margin = closest_boundary_margin(abs(delta), [15.0, 90.0, 150.0, 180.0])
+    half_ref = abs(float((reference.resolved_bfov or (0.0, 0.0, 0.0, 0.0))[2])) / 2.0
+    half_target = abs(float((target.resolved_bfov or (0.0, 0.0, 0.0, 0.0))[2])) / 2.0
+    margin = raw_margin - max(half_ref, half_target)
+    if margin < RELATION_MIN_MARGIN_DEG:
         return None
     item_key = f"{scene.scene_id}:relative_direction_mc:{reference.entity_id}:{target.entity_id}"
-    reference_ref = descriptive_entity_ref(reference)
-    target_ref = descriptive_entity_ref(target)
+    reference_ref = contextual_entity_ref(scene, reference)
+    target_ref = contextual_entity_ref(scene, target)
     choices = choice_rows(PANORAMIC_RELATION_LABELS)
     question = pick_template("relative_direction_mc", f"{scene.scene_id}:{reference.entity_id}:{target.entity_id}").format(
         reference_ref=reference_ref,
@@ -1225,14 +1676,18 @@ def build_relative_direction_mc(scene: SceneMetadata, reference: Entity, target:
 
 
 def build_camera_rotation_transform_mc(scene: SceneMetadata, target: Entity, anchor_index: int, partner_index: int, quality: float) -> Optional[Dict[str, Any]]:
+    if not direction_task_entity_eligible(target):
+        return None
     rotation_direction, angle_deg = ROTATION_OPTIONS[stable_hash(f"{scene.scene_id}:{target.entity_id}:rotation") % len(ROTATION_OPTIONS)]
     relation = camera_rotation_relation(target, rotation_direction, angle_deg)
     if relation is None:
         return None
     raw_delta = wrapped_delta_deg(yaw_deg_360(target) - ((float(angle_deg) if rotation_direction == "right" else -float(angle_deg)) % 360.0))
-    margin = closest_boundary_margin(abs(raw_delta), [15.0, 90.0, 150.0, 180.0])
+    margin = effective_direction_margin(target, closest_boundary_margin(abs(raw_delta), [15.0, 90.0, 150.0, 180.0]))
+    if margin < RELATION_MIN_MARGIN_DEG:
+        return None
     item_key = f"{scene.scene_id}:camera_rotation_transform_mc:{target.entity_id}:{rotation_direction}:{angle_deg}"
-    target_ref = descriptive_entity_ref(target)
+    target_ref = contextual_entity_ref(scene, target)
     choices = choice_rows(REORIENTED_RELATION_LABELS)
     question = pick_template("camera_rotation_transform_mc", f"{scene.scene_id}:{target.entity_id}:{rotation_direction}:{angle_deg}").format(
         angle_deg=angle_deg,
@@ -1262,16 +1717,21 @@ def build_camera_rotation_transform_mc(scene: SceneMetadata, target: Entity, anc
 
 
 def build_object_conditioned_reorientation_mc(scene: SceneMetadata, facing: Entity, target: Entity, anchor_index: int, partner_index: int, quality: float) -> Optional[Dict[str, Any]]:
+    if not direction_task_entity_eligible(facing) or not direction_task_entity_eligible(target):
+        return None
     delta = wrapped_delta_deg(yaw_deg_360(target) - yaw_deg_360(facing))
     relation = panoramic_relation_from_delta(delta, opposite_label="behind")
     if relation is None:
         return None
-    margin = closest_boundary_margin(abs(delta), [15.0, 90.0, 150.0, 180.0])
-    if margin < 8.0:
+    raw_margin = closest_boundary_margin(abs(delta), [15.0, 90.0, 150.0, 180.0])
+    half_facing = abs(float((facing.resolved_bfov or (0.0, 0.0, 0.0, 0.0))[2])) / 2.0
+    half_target = abs(float((target.resolved_bfov or (0.0, 0.0, 0.0, 0.0))[2])) / 2.0
+    margin = raw_margin - max(half_facing, half_target)
+    if margin < RELATION_MIN_MARGIN_DEG:
         return None
     item_key = f"{scene.scene_id}:object_conditioned_reorientation_mc:{facing.entity_id}:{target.entity_id}"
-    facing_ref = descriptive_entity_ref(facing)
-    target_ref = descriptive_entity_ref(target)
+    facing_ref = contextual_entity_ref(scene, facing)
+    target_ref = contextual_entity_ref(scene, target)
     choices = choice_rows(REORIENTED_RELATION_LABELS)
     question = pick_template("object_conditioned_reorientation_mc", f"{scene.scene_id}:{facing.entity_id}:{target.entity_id}").format(
         facing_ref=facing_ref,
@@ -1346,7 +1806,7 @@ def build_observer_distance_choice(scene: SceneMetadata, anchors: Sequence[Dict[
         return None
     closest = min(selected, key=lambda entity: float(entity.entity_center_depth))
     item_key = f"{scene.scene_id}:observer_distance_choice:{selected[0].entity_id}:{selected[-1].entity_id}"
-    option_texts = [descriptive_entity_ref(entity) for entity in selected]
+    option_texts = [contextual_entity_ref(scene, entity) for entity in selected]
     choices = choice_rows(option_texts)
     question = pick_template("observer_distance_choice", f"{scene.scene_id}:{selected[0].entity_id}:{selected[-1].entity_id}")
     answer_key = choices[[entity.entity_id for entity in selected].index(closest.entity_id)]["key"]
@@ -1377,8 +1837,8 @@ def build_relative_3d_position_mc(scene: SceneMetadata, entity_a: Entity, entity
     if not relation:
         return None
     item_key = f"{scene.scene_id}:relative_3d_position_mc:{entity_a.entity_id}:{entity_b.entity_id}"
-    entity_a_ref = descriptive_entity_ref(entity_a)
-    entity_b_ref = descriptive_entity_ref(entity_b)
+    entity_a_ref = contextual_entity_ref(scene, entity_a)
+    entity_b_ref = contextual_entity_ref(scene, entity_b)
     options = relative_3d_choices(entity_a, entity_b, relation, parts)
     choices = choice_rows(options)
     question = pick_template("relative_3d_position_mc", f"{scene.scene_id}:{entity_a.entity_id}:{entity_b.entity_id}").format(
@@ -1505,6 +1965,8 @@ def build_summary(
         counts = Counter(row["ability_group"] for row in rows)
         return dict(sorted(counts.items()))
 
+    derived_rows = [row for row in all_candidates if "derived_rotation" in (row.get("metadata") or {})]
+
     split_counts = Counter()
     for info in scene_infos.values():
         split_counts["total_scenes"] += 1
@@ -1526,6 +1988,7 @@ def build_summary(
         "target_public_per_task": target_public_per_task,
         "num_scenes": len(scene_infos),
         "skipped_invalid_metadata_count": len(skipped_invalid_metadata),
+        "derived_rotation_count": len(derived_rows),
         "candidate_pool_size": len(all_candidates),
         "review_queue_size": len(review_queue),
         "benchmark_public_size": len(public_selected),
@@ -1533,6 +1996,15 @@ def build_summary(
         "benchmark_public_per_task": task_counter(public_selected),
         "benchmark_public_per_group": group_counter(public_selected),
         "skipped_invalid_metadata_examples": list(skipped_invalid_metadata[:10]),
+        "derived_rotation_examples": [
+            {
+                "item_id": row["item_id"],
+                "task_id": row["task_id"],
+                "source_scene_id": row["metadata"]["derived_rotation"]["source_scene_id"],
+                "derived_scene_id": row["metadata"]["derived_rotation"]["derived_scene_id"],
+            }
+            for row in derived_rows[:10]
+        ],
         "scene_metadata_overview": dict(sorted(split_counts.items())),
         "leakage_controls": {
             "training_overlap_expected": "no_scene_overlap_by_construction",

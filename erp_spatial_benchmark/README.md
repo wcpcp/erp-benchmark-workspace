@@ -130,7 +130,44 @@ ambiguous referring expressions. Current blocked anchor substrings include:
 - `shrub`
 - `plant`
 
-These exclusions currently apply at anchor selection time only.
+The broader entity-level benchmark filter also rejects highly repetitive
+categories such as:
+
+- `tree`
+- `window`
+- `grass`
+- `sky`
+- `cloud`
+
+These exclusions are now applied both at anchor selection time and at the
+general entity eligibility level.
+
+Entity reliability filtering now prioritizes detection and reground quality,
+not VLM self-reported semantic confidence. The current hard gate is:
+
+- `best_score >= 0.65`
+- `local_reground.pred_score >= 0.65`
+- valid BFOV
+- non-trivial area
+
+For direction-sensitive tasks (`absolute_direction_mc`,
+`relative_direction_mc`, `camera_rotation_transform_mc`,
+`object_conditioned_reorientation_mc`), the builder also filters out large
+targets to avoid multi-sector ambiguity:
+
+- `x_fov <= 35°`
+- `y_fov <= 30°`
+- `area_ratio <= 0.08`
+
+In addition, sector and relation items require larger angular clearance than
+before. The effective margin is now measured after accounting for target BFOV,
+so boundary cases such as `right` vs `back-right` are filtered more
+aggressively.
+
+When a scene contains multiple similar instances of the same category, the
+builder now adds a light natural disambiguation cue only when needed, for
+example by appending a coarse side hint such as `near the right side`.
+This is only used for duplicate-heavy cases; it is not added to every item.
 
 For most tasks, benchmark prompts continue to use entity-level referring
 expressions such as `reground_query` or `caption_brief`, because those richer
@@ -181,6 +218,20 @@ The script writes:
 - `benchmark_public_prompts.jsonl`
 - `benchmark_public_references.jsonl`
 - `summary.json`
+- `derived_metadata/*.json` when seam/polar stress items are synthesized
+
+If natural seam or polar cases are too scarce, the builder now automatically
+creates derived stress samples:
+
+- seam stress: yaw-shifted ERP panoramas that move strong targets toward the
+  left/right seam
+- polar stress: pitch-rotated ERP panoramas that move strong targets toward
+  high latitude
+
+The rotated ERP image is written next to the original image file, while the
+corresponding transformed metadata is exported under `derived_metadata/` in the
+benchmark output directory. Derived items are tagged with the
+`derived_rotation` diagnostic slice and retain a pointer to the source scene.
 
 ## How scoring works
 

@@ -47,6 +47,9 @@ class Entity:
     projection_iou: Optional[float] = None
     semantic_verification_iou: Optional[float] = None
     semantic_verification_passed: Optional[bool] = None
+    local_reground_pred_score: Optional[float] = None
+    local_reground_consistency_iou: Optional[float] = None
+    local_reground_passed: Optional[bool] = None
     entity_center_depth: Optional[float] = None
     depth_quality_score: Optional[float] = None
     depth_source: str = ""
@@ -66,6 +69,7 @@ class Entity:
         semantic = EntitySemantic.from_dict(data.get("semantic", {}))
         depth_info = data.get("depth", {}) or {}
         spatial_info = data.get("spatial", {}) or {}
+        local_reground = data.get("local_reground", {}) or {}
         entity_center_depth = data.get("entity_center_depth")
         if entity_center_depth is None and depth_info.get("status") == "ok":
             entity_center_depth = depth_info.get("median_m")
@@ -108,6 +112,9 @@ class Entity:
             projection_iou=data.get("projection_iou"),
             semantic_verification_iou=data.get("semantic_verification_iou"),
             semantic_verification_passed=semantic_verification_passed,
+            local_reground_pred_score=local_reground.get("pred_score"),
+            local_reground_consistency_iou=local_reground.get("consistency_iou"),
+            local_reground_passed=local_reground.get("passed"),
             entity_center_depth=entity_center_depth,
             depth_quality_score=depth_quality_score,
             depth_source=data.get("depth_source", "metadata_depth" if entity_center_depth is not None else ""),
@@ -159,10 +166,6 @@ class Entity:
     def verified_semantics(self) -> bool:
         if self.semantic_verification_passed is not None:
             return bool(self.semantic_verification_passed)
-        if self.semantic.confidence is not None:
-            return float(self.semantic.confidence) >= 0.7
-        if self.semantic_quality_score is not None:
-            return float(self.semantic_quality_score) >= 0.7
         return True
 
     @property

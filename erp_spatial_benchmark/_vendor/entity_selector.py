@@ -82,13 +82,15 @@ def _depth_quality_score(entity: Entity) -> float:
     return 1.0 if entity.has_depth else 0.4
 
 
+def _reground_score(entity: Entity) -> float:
+    if entity.local_reground_pred_score is None:
+        return 0.0
+    return _clamp(float(entity.local_reground_pred_score), 0.0, 1.0)
+
+
 def score_entity(entity: Entity, label_counts: Counter, scene: SceneMetadata) -> float:
-    semantic_conf = (
-        float(entity.semantic.confidence)
-        if entity.semantic.confidence is not None
-        else float(entity.semantic_quality_score or 0.7)
-    )
     confidence = float(entity.best_score or entity.confidence or 0.0)
+    reground = _reground_score(entity)
     support_views = _clamp(entity.support_views / 3.0, 0.0, 1.0)
     area_score = _area_score(entity.area_ratio)
     uniqueness = _uniqueness_score(entity, label_counts)
@@ -96,14 +98,14 @@ def score_entity(entity: Entity, label_counts: Counter, scene: SceneMetadata) ->
     semantic_verification = _semantic_verification_score(entity)
     depth_quality = _depth_quality_score(entity)
     score = (
-        0.22 * semantic_conf
-        + 0.14 * confidence
+        0.24 * confidence
+        + 0.20 * reground
         + 0.10 * support_views
         + 0.14 * area_score
         + 0.12 * uniqueness
         + 0.10 * geometry
         + 0.10 * semantic_verification
-        + 0.08 * depth_quality
+        + 0.00 * depth_quality
     )
     return round(score, 4)
 
