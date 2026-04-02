@@ -228,6 +228,12 @@ creates derived stress samples:
 - polar stress: pitch-rotated ERP panoramas that move strong targets toward
   high latitude
 
+To keep the derived set from becoming too synthetic, the current builder uses
+at most one derived seam item and at most one derived polar item per source
+scene. Polar targeting is also intentionally conservative: it aims to move the
+target into a roughly `50°-70°` latitude band, using candidate pitch rotations
+around `40°-50°` instead of more extreme large-angle shifts.
+
 The rotated ERP image is written next to the original image file, while the
 corresponding transformed metadata is exported under `derived_metadata/` in the
 benchmark output directory. Derived items are tagged with the

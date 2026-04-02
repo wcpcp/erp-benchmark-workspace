@@ -98,6 +98,9 @@ DIRECTION_MAX_AREA_RATIO = 0.08
 DERIVED_MIN_SEAM_CANDIDATES = 40
 DERIVED_MIN_POLAR_CANDIDATES = 40
 DERIVED_ROTATION_DIRNAME = "derived_rotations"
+POLAR_TARGET_LAT_MIN_DEG = 50.0
+POLAR_TARGET_LAT_MAX_DEG = 70.0
+POLAR_TARGET_LAT_CENTER_DEG = 60.0
 
 TASK_SPECS: Dict[str, Dict[str, Any]] = {
     "referring_grounding_bfov": {
@@ -1048,13 +1051,13 @@ def choose_pitch_shift_for_polar(entity: Entity) -> Optional[float]:
         return None
     yaw_deg = float(bfov[0])
     pitch_deg = float(bfov[1])
-    candidates = [75.0, 60.0, 45.0, -45.0, -60.0, -75.0]
+    candidates = [50.0, 45.0, 40.0, -40.0, -45.0, -50.0]
     best: Optional[Tuple[float, float]] = None
     for shift in candidates:
         _, new_pitch = rotate_yaw_pitch(yaw_deg, pitch_deg, pitch_shift_deg=shift)
         lat_abs = abs(-new_pitch)
-        if 65.0 <= lat_abs <= 82.0:
-            score = abs(lat_abs - 72.0)
+        if POLAR_TARGET_LAT_MIN_DEG <= lat_abs <= POLAR_TARGET_LAT_MAX_DEG:
+            score = abs(lat_abs - POLAR_TARGET_LAT_CENTER_DEG)
             if best is None or score < best[0]:
                 best = (score, shift)
     return None if best is None else best[1]
@@ -1099,10 +1102,11 @@ def augment_representation_stress_candidates(
         for scene in scenes:
             if produced >= seam_needed:
                 break
+            produced_for_scene = 0
             info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
             anchors = [item for item in select_anchor_entities(scene, max_anchors=8) if benchmark_anchor_eligible(item["entity"])]
             for anchor_payload in anchors:
-                if produced >= seam_needed:
+                if produced >= seam_needed or produced_for_scene >= 1:
                     break
                 target = anchor_payload["entity"]
                 shift = wrapped_delta_deg(yaw_deg_360(target) - 358.0)
@@ -1117,7 +1121,8 @@ def augment_representation_stress_candidates(
                 for row in build_seam_continuity_items(derived_scene, derived_target, [], 0, quality):
                     if add_row(row, derived_scene, info):
                         produced += 1
-                        if produced >= seam_needed:
+                        produced_for_scene += 1
+                        if produced >= seam_needed or produced_for_scene >= 1:
                             break
 
     polar_needed = max(0, max(DERIVED_MIN_POLAR_CANDIDATES, target_public_per_task) - by_task.get("polar_shape_recovery_mc", 0))
@@ -1126,10 +1131,11 @@ def augment_representation_stress_candidates(
         for scene in scenes:
             if produced >= polar_needed:
                 break
+            produced_for_scene = 0
             info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
             anchors = [item for item in select_anchor_entities(scene, max_anchors=8) if benchmark_anchor_eligible(item["entity"])]
             for anchor_payload in anchors:
-                if produced >= polar_needed:
+                if produced >= polar_needed or produced_for_scene >= 1:
                     break
                 target = anchor_payload["entity"]
                 if shape_value(target) is None:
@@ -1148,6 +1154,7 @@ def augment_representation_stress_candidates(
                 row = build_polar_shape_recovery(derived_scene, derived_target, 0, quality)
                 if add_row(row, derived_scene, info):
                     produced += 1
+                    produced_for_scene += 1
 
     return derived_rows
 
