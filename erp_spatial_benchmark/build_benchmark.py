@@ -149,7 +149,7 @@ TASK_SPECS: Dict[str, Dict[str, Any]] = {
             "Which of these objects is closest to the current observer in the full panorama?",
             "From the current camera position, which listed object is nearest?",
         ],
-        "answer_format": "4_way_multiple_choice",
+        "answer_format": "3_or_4_way_multiple_choice",
     },
     "relative_3d_position_mc": {
         "ability_group": "observer_centered_3d_layout_understanding",
@@ -1804,10 +1804,10 @@ def build_polar_shape_recovery(scene: SceneMetadata, target: Entity, anchor_inde
 
 def build_observer_distance_choice(scene: SceneMetadata, anchors: Sequence[Dict[str, Any]], anchor_index: int) -> Optional[Dict[str, Any]]:
     candidates = [item["entity"] for item in anchors if item["entity"].entity_center_depth is not None]
-    if len(candidates) < 4:
+    if len(candidates) < 3:
         return None
     candidates = sorted(candidates, key=lambda entity: float(entity.entity_center_depth))[:6]
-    selected = candidates[:4]
+    selected = candidates[:4] if len(candidates) >= 4 else candidates[:3]
     depths = [float(entity.entity_center_depth) for entity in selected]
     if min(abs(depths[i] - depths[i + 1]) for i in range(len(depths) - 1)) < 0.35:
         return None

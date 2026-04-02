@@ -68,7 +68,7 @@ frame changes.
 This group asks whether the model can recover observer-centered 3D layout from
 ERP direction plus depth-like signals.
 
-- `observer_distance_choice`: among four options, which is nearest to the observer
+- `observer_distance_choice`: among three or four options, which is nearest to the observer
 - `relative_3d_position_mc`: camera-centered multi-axis relation such as left/right, above/below, in front of/behind
 
 This group is intentionally stricter than the training pipeline:
