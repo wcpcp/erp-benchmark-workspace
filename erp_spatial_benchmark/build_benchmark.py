@@ -152,9 +152,9 @@ DERIVED_MIN_POLAR_CANDIDATES = 40
 DERIVED_MIN_ABSOLUTE_DIRECTION_CANDIDATES = 40
 DERIVED_ROTATION_DIRNAME = "derived_rotations"
 DERIVED_MAX_PER_SCENE_PER_TASK = 3
-POLAR_TARGET_LAT_MIN_DEG = 50.0
-POLAR_TARGET_LAT_MAX_DEG = 70.0
-POLAR_TARGET_LAT_CENTER_DEG = 60.0
+POLAR_TARGET_LAT_MIN_DEG = 75.0
+POLAR_TARGET_LAT_MAX_DEG = 85.0
+POLAR_TARGET_LAT_CENTER_DEG = 80.0
 RELATIVE_3D_MAX_X_FOV_DEG = 35.0
 RELATIVE_3D_MAX_Y_FOV_DEG = 35.0
 RELATIVE_3D_MAX_FOV_AREA = 1200.0
@@ -202,6 +202,7 @@ REFERENCE_STOPWORDS = {
     "center",
     "middle",
 }
+POLAR_SHAPE_LEAK_TOKENS = frozenset(set(SHAPE_CANONICAL_MAP.keys()) | set(SHAPE_CANONICAL_MAP.values()))
 
 TASK_SPECS: Dict[str, Dict[str, Any]] = {
     "referring_grounding_bfov": {
@@ -679,6 +680,21 @@ def contextual_entity_ref(scene: SceneMetadata, entity: Entity) -> str:
     if not hint:
         return ref
     return f"{ref} {hint}"
+
+
+def strip_polar_shape_tokens(text: str) -> str:
+    tokens: List[str] = []
+    for token in str(text).split():
+        normalized = normalize_phrase(token.strip(".,;:!?()[]{}\"'"))
+        if normalized in POLAR_SHAPE_LEAK_TOKENS:
+            continue
+        tokens.append(token)
+    cleaned = " ".join(tokens).strip()
+    return first_nonempty_str(cleaned, text)
+
+
+def polar_entity_ref(scene: SceneMetadata, entity: Entity) -> str:
+    return strip_polar_shape_tokens(contextual_entity_ref(scene, entity))
 
 
 def normalized_bbox_1000(entity: Entity, scene: SceneMetadata) -> Optional[Tuple[int, int, int, int]]:
@@ -1342,22 +1358,26 @@ def build_rotated_scene(
     return SceneMetadata.from_dict(raw)
 
 
-def choose_pitch_shift_for_polar(entity: Entity) -> Optional[float]:
+def choose_pitch_shift_for_polar(scene: SceneMetadata, entity: Entity) -> Optional[float]:
     bfov = entity.resolved_bfov
     if bfov is None:
         return None
     yaw_deg = float(bfov[0])
-    pitch_deg = float(bfov[1])
-    candidates = [50.0, 45.0, 40.0, -40.0, -45.0, -50.0]
-    best: Optional[Tuple[float, float]] = None
+    pitch_current = float(bfov[1])
+    target_lat = POLAR_TARGET_LAT_MIN_DEG + (
+        (stable_hash(f"polar_target_lat:{scene.scene_id}:{entity.entity_id}") % 1001) / 1000.0
+    ) * (POLAR_TARGET_LAT_MAX_DEG - POLAR_TARGET_LAT_MIN_DEG)
+    best: Optional[Tuple[float, float, float]] = None
+    candidates = [float(shift) for shift in range(-89, 90) if shift != 0]
     for shift in candidates:
-        _, new_pitch = rotate_yaw_pitch(yaw_deg, pitch_deg, pitch_shift_deg=shift)
+        _, new_pitch = rotate_yaw_pitch(yaw_deg, pitch_current, pitch_shift_deg=shift)
         lat_abs = abs(-new_pitch)
         if POLAR_TARGET_LAT_MIN_DEG <= lat_abs <= POLAR_TARGET_LAT_MAX_DEG:
-            score = abs(lat_abs - POLAR_TARGET_LAT_CENTER_DEG)
-            if best is None or score < best[0]:
-                best = (score, shift)
-    return None if best is None else best[1]
+            score = abs(lat_abs - target_lat)
+            candidate = (score, abs(shift), shift)
+            if best is None or candidate < best:
+                best = candidate
+    return None if best is None else best[2]
 
 
 def choose_yaw_shift_for_absolute_direction(entity: Entity) -> float:
@@ -1550,7 +1570,7 @@ def augment_representation_stress_candidates(
                     continue
                 if shape_value(target) is None:
                     continue
-                shift = choose_pitch_shift_for_polar(target)
+                shift = choose_pitch_shift_for_polar(scene, target)
                 if shift is None:
                     continue
                 suffix = f"polar_pitch_{int(round(shift))}_{target.entity_id}"
@@ -2214,7 +2234,7 @@ def build_polar_shape_recovery(scene: SceneMetadata, target: Entity, anchor_inde
         return None
     if not (abs(target.lat_deg) >= 60.0 or infer_pole_proximity(target)):
         return None
-    target_ref = entity_ref(target, scene, f"{scene.scene_id}:polar_shape_recovery_mc:{target.entity_id}:target")
+    target_ref = polar_entity_ref(scene, target)
     distractors = SHAPE_DISTRACTOR_MAP.get(shape, [item for item in SHAPE_FALLBACK_POOL if item != shape][:3])
     if len(distractors) < 3:
         return None

@@ -202,19 +202,11 @@ expressions such as `reground_query` or `caption_brief`, because those richer
 references are useful for measuring language-object understanding and do not
 normally leak the answer.
 
-Only the high-latitude distortion tasks use a sanitized reference form, to
-avoid leaking shape-related cues in the prompt itself. In those polar tasks,
-the builder uses:
-
-- coarse object label
-- plus one localization hint
-- localization is chosen deterministically per item between:
-  - normalized ERP box coordinates `[x1, y1, x2, y2]` in a `0-1000` scale
-  - or BFOV `[yaw, pitch, x_fov, y_fov]`
-
-This keeps the polar prompts informative enough to locate the target while
-avoiding easy leakage of shape, material, color, or other rich semantic
-attributes.
+High-latitude distortion tasks now also use natural referring expressions. The
+builder starts from the same `reground_query` / `caption_brief` path as other
+tasks, then strips any direct canonical shape words from the final reference.
+This keeps the target description natural and semantically rich without
+copying the exact geometry answer into the question text.
 
 For derived yaw/pitch rotations, the builder also rewrites the main
 geometry-bearing metadata so derived scenes remain internally consistent for
@@ -419,17 +411,20 @@ These rules apply broadly across the benchmark before task-specific logic runs.
 - Natural items require either:
   - `abs(lat) >= 60°`
   - or `infer_pole_proximity(entity)`
-- To avoid answer leakage, this task uses a sanitized reference form:
-  - coarse object label
-  - plus one deterministic localization cue
-  - either normalized `0-1000` box coordinates or BFOV
+- This task uses the target's natural referring expression
+  (`reground_query` / `caption_brief`) together with the standard duplicate
+  disambiguation logic used elsewhere in the benchmark.
+- Direct canonical shape words are stripped from that reference before the
+  question is rendered, so the prompt remains descriptive without spelling out
+  the answer.
 - Distractors prefer geometry-near alternatives rather than arbitrary fallback
   words.
 - If natural polar cases are too scarce, the builder synthesizes polar stress
   items through pitch-rotated ERP scenes.
-- Derived polar targeting is intentionally conservative:
-  - target latitude band: roughly `50°-70°`
-  - candidate pitch rotations: around `40°-50°`
+- Derived polar targeting is intentionally hard:
+  - target latitude band: stable-random within roughly `75°-85°`
+  - candidate pitch rotations: searched over non-zero pitch shifts until the
+    rotated target lands inside that band
 - Derived polar samples may reuse the same source scene, but they must come
   from different target entities. The builder will not generate multiple polar
   variants for the same entity.
@@ -478,9 +473,9 @@ creates derived stress samples:
 
 To keep the derived set from becoming too synthetic, the current builder uses
 multiple derived seam/polar items only when they come from different target
-entities. Polar targeting is also intentionally conservative: it aims to move
-the target into a roughly `50°-70°` latitude band, using candidate pitch
-rotations around `40°-50°` instead of more extreme large-angle shifts.
+entities. Polar targeting is intentionally hard: it uses a stable-random
+target latitude in the `75°-85°` band and searches non-zero pitch rotations
+until the chosen target lands there.
 
 The rotated ERP image is written next to the original image file, while the
 corresponding transformed metadata is exported under `derived_metadata/` in the
