@@ -77,22 +77,42 @@ SHAPE_CANONICAL_MAP = {
     "round": "round",
     "circular": "round",
     "circle": "round",
+    "rounded": "round",
+    "roundish": "round",
+    "disc": "round",
+    "disk": "round",
     "rectangular": "rectangular",
     "rectangle": "rectangular",
     "boxy": "rectangular",
     "box-shaped": "rectangular",
+    "flat rectangular": "rectangular",
+    "flat-rectangular": "rectangular",
+    "box like": "rectangular",
+    "box-like": "rectangular",
+    "cuboid": "rectangular",
+    "cuboidal": "rectangular",
     "square": "square",
     "oval": "oval",
     "elliptical": "oval",
     "ellipse": "oval",
+    "oblong": "oval",
+    "ellipsoid": "oval",
     "cylindrical": "cylindrical",
     "cylinder": "cylindrical",
+    "tube": "cylindrical",
+    "tubular": "cylindrical",
+    "barrel": "cylindrical",
+    "barrel-shaped": "cylindrical",
     "spherical": "spherical",
     "sphere": "spherical",
+    "dome": "spherical",
+    "globular": "spherical",
     "triangular": "triangular",
     "triangle": "triangular",
     "arched": "arched",
     "arch": "arched",
+    "arc-shaped": "arched",
+    "arc shaped": "arched",
 }
 SHAPE_DISTRACTOR_MAP = {
     "round": ["oval", "spherical", "cylindrical"],
@@ -115,6 +135,8 @@ ROTATION_OPTIONS = [
 MANUAL_REVIEW_TASKS = {
     "seam_continuity_mc",
     "polar_shape_recovery_mc",
+    "polar_shape_matching_mc",
+    "polar_cross_latitude_matching_mc",
     "relative_3d_position_mc",
 }
 ANCHOR_LABEL_BLOCKLIST_SUBSTRINGS = (
@@ -155,6 +177,8 @@ DERIVED_MAX_PER_SCENE_PER_TASK = 3
 POLAR_TARGET_LAT_MIN_DEG = 75.0
 POLAR_TARGET_LAT_MAX_DEG = 85.0
 POLAR_TARGET_LAT_CENTER_DEG = 80.0
+POLAR_NATURAL_MIN_LAT_DEG = 60.0
+POLAR_LOW_LAT_MAX_DEG = 35.0
 RELATIVE_3D_MAX_X_FOV_DEG = 35.0
 RELATIVE_3D_MAX_Y_FOV_DEG = 35.0
 RELATIVE_3D_MAX_FOV_AREA = 1200.0
@@ -274,6 +298,22 @@ TASK_SPECS: Dict[str, Dict[str, Any]] = {
         "templates": [
             "What is the true shape of {target_ref} in this ERP panorama?",
             "Which shape best matches the real object geometry of {target_ref} in this high-latitude ERP region?",
+        ],
+        "answer_format": "4_way_multiple_choice",
+    },
+    "polar_shape_matching_mc": {
+        "ability_group": "erp_representation_understanding",
+        "templates": [
+            "Which listed object best matches the real geometry of {target_ref} in this high-latitude ERP region?",
+            "Which candidate object most closely matches the true shape of {target_ref} in this high-latitude ERP panorama?",
+        ],
+        "answer_format": "4_way_multiple_choice",
+    },
+    "polar_cross_latitude_matching_mc": {
+        "ability_group": "erp_representation_understanding",
+        "templates": [
+            "Which lower-latitude object best matches the real geometry of {target_ref} in this high-latitude ERP region?",
+            "Which object from a less distorted region most closely matches the true shape of {target_ref}?",
         ],
         "answer_format": "4_way_multiple_choice",
     },
@@ -469,6 +509,8 @@ def generate_scene_candidates(scene: SceneMetadata) -> List[Dict[str, Any]]:
             build_referring_grounding_bfov(scene, anchor, anchors, anchor_index, quality),
             build_absolute_direction_mc(scene, anchor, anchor_index, quality),
             build_polar_shape_recovery(scene, anchor, anchor_index, quality),
+            build_polar_shape_matching(scene, anchor, anchor_index, quality),
+            build_polar_cross_latitude_matching(scene, anchor, anchor_index, quality),
         ]:
             if row and row["item_id"] not in used_item_ids:
                 candidates.append(row)
@@ -852,8 +894,18 @@ def shape_value(entity: Entity) -> Optional[str]:
     raw = attrs.get("shape")
     if raw is None:
         return None
-    value = normalize_phrase(str(raw))
-    return SHAPE_CANONICAL_MAP.get(value)
+    value = normalize_phrase(str(raw).replace("-", " "))
+    exact = SHAPE_CANONICAL_MAP.get(value)
+    if exact:
+        return exact
+    padded = f" {value} "
+    for alias, canonical in sorted(SHAPE_CANONICAL_MAP.items(), key=lambda item: len(item[0]), reverse=True):
+        alias_norm = normalize_phrase(alias.replace("-", " "))
+        if not alias_norm:
+            continue
+        if f" {alias_norm} " in padded:
+            return canonical
+    return None
 
 
 def stable_hash(text: str) -> int:
@@ -1020,6 +1072,51 @@ def bfov_text(entity: Entity) -> str:
     if bfov is None:
         return "[unknown]"
     return f"[yaw={bfov[0]:.1f}, pitch={bfov[1]:.1f}, x_fov={bfov[2]:.1f}, y_fov={bfov[3]:.1f}]"
+
+
+def polar_target_eligible(entity: Entity) -> bool:
+    return bool(shape_value(entity)) and (abs(entity.lat_deg) >= POLAR_NATURAL_MIN_LAT_DEG or infer_pole_proximity(entity))
+
+
+def polar_option_entities(
+    scene: SceneMetadata,
+    target: Entity,
+    *,
+    low_lat_only: bool = False,
+) -> List[Entity]:
+    label_counts = Counter(entity.label for entity in scene.entities)
+    candidates: List[Entity] = []
+    for entity in scene.entities:
+        if entity.entity_id == target.entity_id:
+            continue
+        if not benchmark_entity_eligible(entity):
+            continue
+        if not reference_is_resolvable(scene, entity):
+            continue
+        if shape_value(entity) is None:
+            continue
+        if low_lat_only and abs(entity.lat_deg) > POLAR_LOW_LAT_MAX_DEG:
+            continue
+        candidates.append(entity)
+    candidates.sort(
+        key=lambda entity: (
+            -float(score_entity(entity, label_counts, scene)),
+            stable_hash(f"polar_option:{scene.scene_id}:{entity.entity_id}"),
+        )
+    )
+    return candidates
+
+
+def unique_polar_entity_refs(scene: SceneMetadata, entities: Sequence[Entity]) -> List[Tuple[Entity, str]]:
+    seen_refs: set[str] = set()
+    unique: List[Tuple[Entity, str]] = []
+    for entity in entities:
+        ref = polar_entity_ref(scene, entity)
+        if not ref or ref in seen_refs:
+            continue
+        seen_refs.add(ref)
+        unique.append((entity, ref))
+    return unique
 
 
 def benchmark_item(
@@ -1575,18 +1672,28 @@ def augment_representation_stress_candidates(
                 if target.entity_id in used_target_ids:
                     produced_for_scene += 1
 
-    polar_needed = max(0, max(DERIVED_MIN_POLAR_CANDIDATES, target_public_per_task) - by_task.get("polar_shape_recovery_mc", 0))
-    if polar_needed > 0:
-        produced = 0
+    polar_task_ids = [
+        "polar_shape_recovery_mc",
+        "polar_shape_matching_mc",
+        "polar_cross_latitude_matching_mc",
+    ]
+    polar_needed_by_task = {
+        task_id: max(0, max(DERIVED_MIN_POLAR_CANDIDATES, target_public_per_task) - by_task.get(task_id, 0))
+        for task_id in polar_task_ids
+    }
+    if any(value > 0 for value in polar_needed_by_task.values()):
+        produced_by_task: Counter[str] = Counter()
         for scene in scenes:
-            if produced >= polar_needed:
+            if all(produced_by_task[task_id] >= polar_needed_by_task[task_id] for task_id in polar_task_ids):
                 break
             produced_for_scene = 0
             used_target_ids: set[str] = set()
             info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
             targets = derived_candidate_entities(scene)
             for target in targets:
-                if produced >= polar_needed or produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
+                if all(produced_by_task[task_id] >= polar_needed_by_task[task_id] for task_id in polar_task_ids):
+                    break
+                if produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
                     break
                 if target.entity_id in used_target_ids:
                     continue
@@ -1603,9 +1710,21 @@ def augment_representation_stress_candidates(
                 if derived_target is None:
                     continue
                 quality = float(score_entity(derived_target, Counter(e.label for e in derived_scene.entities), derived_scene))
-                row = build_polar_shape_recovery(derived_scene, derived_target, 0, quality)
-                if add_row(row, derived_scene, info):
-                    produced += 1
+                produced_any = False
+                for row in [
+                    build_polar_shape_recovery(derived_scene, derived_target, 0, quality),
+                    build_polar_shape_matching(derived_scene, derived_target, 0, quality),
+                    build_polar_cross_latitude_matching(derived_scene, derived_target, 0, quality),
+                ]:
+                    if row is None:
+                        continue
+                    task_id = str(row["task_id"])
+                    if produced_by_task[task_id] >= polar_needed_by_task[task_id]:
+                        continue
+                    if add_row(row, derived_scene, info):
+                        produced_by_task[task_id] += 1
+                        produced_any = True
+                if produced_any:
                     used_target_ids.add(target.entity_id)
                     produced_for_scene += 1
 
@@ -2254,21 +2373,21 @@ def build_polar_shape_recovery(scene: SceneMetadata, target: Entity, anchor_inde
     shape = shape_value(target)
     if not shape:
         return None
-    if not (abs(target.lat_deg) >= 60.0 or infer_pole_proximity(target)):
+    if not polar_target_eligible(target):
         return None
     target_ref = polar_entity_ref(scene, target)
     distractors = SHAPE_DISTRACTOR_MAP.get(shape, [item for item in SHAPE_FALLBACK_POOL if item != shape][:3])
     if len(distractors) < 3:
         return None
     options = [shape] + distractors
-    choices = choice_rows(options)
+    choices, answer_key = shuffled_choice_rows(options, shape, f"{scene.scene_id}:{target.entity_id}:polar_shape_recovery")
     question = pick_template("polar_shape_recovery_mc", f"{scene.scene_id}:{target.entity_id}").format(target_ref=target_ref)
     return benchmark_item(
         scene=scene,
         task_id="polar_shape_recovery_mc",
         item_id=f"{scene.scene_id}_polar_shape_recovery_mc_{target.entity_id}",
         question=question,
-        answer=choices[0]["key"],
+        answer=answer_key,
         answer_text=shape,
         options=choices,
         target_entities=[target.entity_id],
@@ -2283,6 +2402,122 @@ def build_polar_shape_recovery(scene: SceneMetadata, target: Entity, anchor_inde
         diagnostic_slices=dedupe_keep_order(slices_for_entity(target) + ["pole"]),
         requires_manual_review=True,
         review_notes=["Verify that the labeled shape is visible enough and that the item is a true ERP distortion case."],
+    )
+
+
+def build_polar_shape_matching(scene: SceneMetadata, target: Entity, anchor_index: int, quality: float) -> Optional[Dict[str, Any]]:
+    target_shape = shape_value(target)
+    if not target_shape or not polar_target_eligible(target):
+        return None
+    pool = polar_option_entities(scene, target, low_lat_only=False)
+    correct_pool = [entity for entity in pool if shape_value(entity) == target_shape]
+    if not correct_pool:
+        return None
+    preferred_distractor_shapes = SHAPE_DISTRACTOR_MAP.get(target_shape, [])
+    distractor_pool = [entity for entity in pool if shape_value(entity) != target_shape]
+    distractor_pool.sort(
+        key=lambda entity: (
+            0 if shape_value(entity) in preferred_distractor_shapes else 1,
+            preferred_distractor_shapes.index(shape_value(entity)) if shape_value(entity) in preferred_distractor_shapes else 999,
+        )
+    )
+    selected_entities = [correct_pool[0]]
+    used_shapes = {target_shape}
+    for entity in distractor_pool:
+        entity_shape = shape_value(entity)
+        if entity_shape is None or entity_shape in used_shapes:
+            continue
+        selected_entities.append(entity)
+        used_shapes.add(entity_shape)
+        if len(selected_entities) == 4:
+            break
+    if len(selected_entities) < 4:
+        return None
+    option_rows = unique_polar_entity_refs(scene, selected_entities)
+    if len(option_rows) < 4:
+        return None
+    option_rows = option_rows[:4]
+    option_texts = [ref for _, ref in option_rows]
+    correct_text = option_rows[0][1]
+    choices, answer_key = shuffled_choice_rows(option_texts, correct_text, f"{scene.scene_id}:{target.entity_id}:polar_shape_matching")
+    target_ref = polar_entity_ref(scene, target)
+    question = pick_template("polar_shape_matching_mc", f"{scene.scene_id}:{target.entity_id}").format(target_ref=target_ref)
+    return benchmark_item(
+        scene=scene,
+        task_id="polar_shape_matching_mc",
+        item_id=f"{scene.scene_id}_polar_shape_matching_mc_{target.entity_id}",
+        question=question,
+        answer=answer_key,
+        answer_text=correct_text,
+        options=choices,
+        target_entities=[target.entity_id] + [entity.entity_id for entity, _ in option_rows],
+        metadata={
+            "target_ref": target_ref,
+            "target_shape": target_shape,
+            "target_bfov": list(target.resolved_bfov or ()),
+            "candidate_entity_ids": [entity.entity_id for entity, _ in option_rows],
+            "candidate_shapes": [shape_value(entity) for entity, _ in option_rows],
+        },
+        difficulty="hard",
+        quality_score=quality,
+        diagnostic_slices=dedupe_keep_order(slices_for_entity(target) + ["pole"]),
+        requires_manual_review=True,
+        review_notes=["Verify that the matching candidates remain visually distinguishable and that the target shape is recoverable under polar distortion."],
+    )
+
+
+def build_polar_cross_latitude_matching(scene: SceneMetadata, target: Entity, anchor_index: int, quality: float) -> Optional[Dict[str, Any]]:
+    target_shape = shape_value(target)
+    if not target_shape or not polar_target_eligible(target):
+        return None
+    pool = polar_option_entities(scene, target, low_lat_only=True)
+    correct_pool = [entity for entity in pool if shape_value(entity) == target_shape]
+    if not correct_pool:
+        return None
+    distractor_pool = [entity for entity in pool if shape_value(entity) != target_shape]
+    selected_entities = [correct_pool[0]]
+    used_shapes = {target_shape}
+    for entity in distractor_pool:
+        entity_shape = shape_value(entity)
+        if entity_shape is None or entity_shape in used_shapes:
+            continue
+        selected_entities.append(entity)
+        used_shapes.add(entity_shape)
+        if len(selected_entities) == 4:
+            break
+    if len(selected_entities) < 4:
+        return None
+    option_rows = unique_polar_entity_refs(scene, selected_entities)
+    if len(option_rows) < 4:
+        return None
+    option_rows = option_rows[:4]
+    option_texts = [ref for _, ref in option_rows]
+    correct_text = option_rows[0][1]
+    choices, answer_key = shuffled_choice_rows(option_texts, correct_text, f"{scene.scene_id}:{target.entity_id}:polar_cross_latitude_matching")
+    target_ref = polar_entity_ref(scene, target)
+    question = pick_template("polar_cross_latitude_matching_mc", f"{scene.scene_id}:{target.entity_id}").format(target_ref=target_ref)
+    return benchmark_item(
+        scene=scene,
+        task_id="polar_cross_latitude_matching_mc",
+        item_id=f"{scene.scene_id}_polar_cross_latitude_matching_mc_{target.entity_id}",
+        question=question,
+        answer=answer_key,
+        answer_text=correct_text,
+        options=choices,
+        target_entities=[target.entity_id] + [entity.entity_id for entity, _ in option_rows],
+        metadata={
+            "target_ref": target_ref,
+            "target_shape": target_shape,
+            "target_bfov": list(target.resolved_bfov or ()),
+            "candidate_entity_ids": [entity.entity_id for entity, _ in option_rows],
+            "candidate_shapes": [shape_value(entity) for entity, _ in option_rows],
+            "candidate_abs_lat_deg": [round(abs(entity.lat_deg), 2) for entity, _ in option_rows],
+        },
+        difficulty="hard",
+        quality_score=quality,
+        diagnostic_slices=dedupe_keep_order(slices_for_entity(target) + ["pole"]),
+        requires_manual_review=True,
+        review_notes=["Verify that the correct option is clearly from a lower-distortion latitude band while still matching the target geometry."],
     )
 
 

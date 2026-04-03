@@ -83,6 +83,8 @@ just as another image.
 
 - `seam_continuity_mc`: seam-aware diagnostic family with five subtypes: cross-boundary nearest neighbor, cross-boundary relative direction, seam dedup counting, structure continuity, and same-entity judgement
 - `polar_shape_recovery_mc`: high-latitude distortion should not change the inferred true shape
+- `polar_shape_matching_mc`: match a high-latitude distorted target to another object with the same true geometry
+- `polar_cross_latitude_matching_mc`: match a high-latitude distorted target to a lower-latitude object with the same true geometry
 
 Current seam subtypes and question templates:
 
@@ -295,6 +297,8 @@ These rules apply broadly across the benchmark before task-specific logic runs.
     - `relative_3d_position_mc`
     - `seam_continuity_mc`
     - `polar_shape_recovery_mc`
+    - `polar_shape_matching_mc`
+    - `polar_cross_latitude_matching_mc`
 
 ### Task-specific filtering rules
 
@@ -429,6 +433,30 @@ These rules apply broadly across the benchmark before task-specific logic runs.
 - Derived polar samples may reuse the same source scene, but they must come
   from different target entities. The builder will not generate multiple polar
   variants for the same entity.
+
+#### `polar_shape_matching_mc`
+
+- Requires the same high-latitude target eligibility as `polar_shape_recovery_mc`.
+- The target still uses the cleaned natural referring expression path:
+  `reground_query` / `caption_brief` with shape-leak terms removed.
+- Options are other scene objects, not shape labels.
+- The correct option must be another resolvable entity whose canonical
+  geometric shape matches the target.
+- Distractors must come from different canonical shape classes, with preference
+  for geometry-near alternatives when available.
+- This task is especially useful when explicit shape-label recovery is too
+  sparse but same-shape object pairs are still available.
+
+#### `polar_cross_latitude_matching_mc`
+
+- Uses the same high-latitude target definition as the other polar tasks.
+- The correct option must come from a lower-distortion latitude band:
+  `abs(lat) <= 35°`.
+- Distractors are also drawn from the lower-latitude pool, but must come from
+  different canonical shape classes.
+- This task measures whether the model can match a strongly distorted polar
+  target to a more canonical lower-latitude object without relying on an
+  explicit shape label.
 
 ## Inputs
 
