@@ -204,9 +204,10 @@ normally leak the answer.
 
 High-latitude distortion tasks now also use natural referring expressions. The
 builder starts from the same `reground_query` / `caption_brief` path as other
-tasks, then strips any direct canonical shape words from the final reference.
-This keeps the target description natural and semantically rich without
-copying the exact geometry answer into the question text.
+tasks, then strips both direct canonical shape words and the entity's own raw
+`semantic.attributes["shape"]` terms from the final reference. This keeps the
+target description natural and semantically rich without copying the exact
+geometry answer into the question text.
 
 For derived yaw/pitch rotations, the builder also rewrites the main
 geometry-bearing metadata so derived scenes remain internally consistent for
@@ -414,9 +415,9 @@ These rules apply broadly across the benchmark before task-specific logic runs.
 - This task uses the target's natural referring expression
   (`reground_query` / `caption_brief`) together with the standard duplicate
   disambiguation logic used elsewhere in the benchmark.
-- Direct canonical shape words are stripped from that reference before the
-  question is rendered, so the prompt remains descriptive without spelling out
-  the answer.
+- Direct canonical shape words and the entity's raw shape-attribute terms are
+  stripped from that reference before the question is rendered, so the prompt
+  remains descriptive without spelling out the answer.
 - Distractors prefer geometry-near alternatives rather than arbitrary fallback
   words.
 - If natural polar cases are too scarce, the builder synthesizes polar stress

@@ -682,19 +682,41 @@ def contextual_entity_ref(scene: SceneMetadata, entity: Entity) -> str:
     return f"{ref} {hint}"
 
 
-def strip_polar_shape_tokens(text: str) -> str:
+def polar_shape_leak_terms(entity: Entity) -> set[str]:
+    terms = set(POLAR_SHAPE_LEAK_TOKENS)
+    attrs = entity.semantic.attributes or {}
+    raw_shape = first_nonempty_str(attrs.get("shape"))
+    if raw_shape:
+        normalized = normalize_phrase(raw_shape.replace("-", " "))
+        terms.update(token for token in normalized.split() if token)
+        terms.add(normalized)
+    canonical = shape_value(entity)
+    if canonical:
+        terms.update(token for token in canonical.replace("-", " ").split() if token)
+        terms.add(canonical)
+    return terms
+
+
+def strip_polar_shape_tokens(text: str, entity: Entity) -> str:
+    leak_terms = polar_shape_leak_terms(entity)
     tokens: List[str] = []
     for token in str(text).split():
-        normalized = normalize_phrase(token.strip(".,;:!?()[]{}\"'"))
-        if normalized in POLAR_SHAPE_LEAK_TOKENS:
+        normalized = normalize_phrase(token.strip(".,;:!?()[]{}\"'").replace("-", " "))
+        if normalized in leak_terms:
             continue
         tokens.append(token)
-    cleaned = " ".join(tokens).strip()
-    return first_nonempty_str(cleaned, text)
+    return " ".join(tokens).strip()
 
 
 def polar_entity_ref(scene: SceneMetadata, entity: Entity) -> str:
-    return strip_polar_shape_tokens(contextual_entity_ref(scene, entity))
+    cleaned = strip_polar_shape_tokens(contextual_entity_ref(scene, entity), entity)
+    if cleaned:
+        return cleaned
+    hint = duplicate_disambiguation_hint(scene, entity)
+    base = f"the {normalize_phrase(entity.label) or 'object'}"
+    if hint:
+        return f"{base} {hint}"
+    return base
 
 
 def normalized_bbox_1000(entity: Entity, scene: SceneMetadata) -> Optional[Tuple[int, int, int, int]]:
