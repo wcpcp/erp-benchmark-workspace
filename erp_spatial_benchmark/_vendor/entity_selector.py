@@ -140,6 +140,9 @@ def select_anchor_entities(scene: SceneMetadata, max_anchors: int = 6) -> List[D
         )
     scored.sort(key=lambda item: item["selection_score"], reverse=True)
 
+    if max_anchors <= 0:
+        return scored
+
     selected: List[Dict[str, object]] = []
     used_bins = set()
 

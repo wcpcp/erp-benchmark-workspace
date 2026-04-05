@@ -335,7 +335,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", required=True, help="Output directory for benchmark artifacts.")
     parser.add_argument("--scene-manifest", default="", help="Optional JSONL with scene_id/group_id/source_id/domain metadata.")
     parser.add_argument("--target-public-per-task", type=int, default=250, help="Target number of selected public benchmark items per task.")
-    parser.add_argument("--max-per-scene-per-task", type=int, default=1, help="Maximum selected items from one scene for one task.")
+    parser.add_argument(
+        "--max-per-scene-per-task",
+        type=int,
+        default=0,
+        help="Maximum selected items from one scene for one task. Use 0 for no per-scene cap.",
+    )
     parser.add_argument("--seed", type=int, default=20260327, help="Random seed for deterministic splitting and selection.")
     parser.add_argument(
         "--fail-on-invalid-json",
@@ -401,6 +406,7 @@ def main() -> int:
         max_per_scene_per_task=args.max_per_scene_per_task,
         seed=split_seed + 11,
     )
+    public_selected = rebalance_mc_answer_keys(public_selected, split_seed + 29)
 
     review_queue = [
         row
@@ -497,8 +503,8 @@ def generate_scene_candidates(scene: SceneMetadata) -> List[Dict[str, Any]]:
     label_counts = Counter(entity.label for entity in scene.entities)
     anchors = [
         item
-        for item in select_anchor_entities(scene, max_anchors=8)
-        if benchmark_anchor_eligible(item["entity"]) and reference_is_resolvable(scene, item["entity"])
+        for item in select_anchor_entities(scene, max_anchors=0)
+        if anchor_pool_entity_eligible(item["entity"])
     ]
 
     used_item_ids: set[str] = set()
@@ -555,6 +561,21 @@ def benchmark_entity_eligible(entity: Entity) -> bool:
     if reground_score < MIN_REGROUND_SCORE:
         return False
     if float(entity.area_ratio or 0.0) <= 0.0004:
+        return False
+    return bool(entity.resolved_bfov)
+
+
+def anchor_pool_entity_eligible(entity: Entity) -> bool:
+    label = normalize_phrase(entity.label)
+    if not label or label in {"unknown", "object"}:
+        return False
+    if any(token in label for token in ENTITY_LABEL_BLOCKLIST_SUBSTRINGS):
+        return False
+    det_score = float(entity.best_score or entity.confidence or 0.0)
+    if det_score < MIN_DETECTION_SCORE:
+        return False
+    reground_score = float(entity.local_reground_pred_score or 0.0)
+    if reground_score < MIN_REGROUND_SCORE:
         return False
     return bool(entity.resolved_bfov)
 
@@ -938,6 +959,60 @@ def shuffled_choice_rows(options: Sequence[str], correct_text: str, seed_key: st
     choices = choice_rows(ordered)
     answer_key = label_to_choice_key(ordered, correct_text)
     return choices, answer_key
+
+
+def rebalance_choice_rows(options: Sequence[Dict[str, str]], answer_text: str, answer_key: str, target_key: str, seed_key: str) -> Tuple[List[Dict[str, str]], str]:
+    ordered = [str(option["text"]) for option in options]
+    current_correct_text = answer_text
+    if current_correct_text not in ordered:
+        current_index = ord(answer_key) - ord("A")
+        if 0 <= current_index < len(ordered):
+            current_correct_text = ordered[current_index]
+        else:
+            raise ValueError("Cannot recover correct option text for answer rebalancing.")
+    incorrect = [text for text in ordered if text != current_correct_text]
+    if incorrect:
+        rotation = stable_hash(f"{seed_key}:incorrects") % len(incorrect)
+        incorrect = incorrect[rotation:] + incorrect[:rotation]
+    target_index = ord(target_key) - ord("A")
+    rebuilt = list(incorrect)
+    rebuilt.insert(target_index, current_correct_text)
+    return choice_rows(rebuilt), target_key
+
+
+def rebalance_mc_answer_keys(rows: Sequence[Dict[str, Any]], seed: int) -> List[Dict[str, Any]]:
+    balanced = [copy.deepcopy(row) for row in rows]
+    by_task: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for row in balanced:
+        if row.get("options"):
+            by_task[str(row["task_id"])].append(row)
+
+    for task_id, task_rows in by_task.items():
+        counts: Counter[str] = Counter()
+        task_rows.sort(key=lambda row: stable_hash(f"{seed}:{task_id}:{row['item_id']}:answer_balance"))
+        for row in task_rows:
+            options = list(row.get("options") or [])
+            if not options:
+                continue
+            valid_keys = [option_key(i) for i in range(len(options))]
+            target_key = min(
+                valid_keys,
+                key=lambda key: (
+                    counts[key],
+                    stable_hash(f"{seed}:{task_id}:{row['item_id']}:{key}"),
+                ),
+            )
+            new_options, new_answer = rebalance_choice_rows(
+                options,
+                str(row.get("answer_text", "")),
+                str(row.get("answer", "")),
+                target_key,
+                f"{seed}:{task_id}:{row['item_id']}",
+            )
+            row["options"] = new_options
+            row["answer"] = new_answer
+            counts[new_answer] += 1
+    return balanced
 
 
 def difficulty_from_margin(margin: float) -> str:
@@ -1540,7 +1615,7 @@ def derived_candidate_entities(
     label_counts = Counter(entity.label for entity in scene.entities)
     filtered: List[Entity] = []
     for entity in scene.entities:
-        if not benchmark_entity_eligible(entity):
+        if not anchor_pool_entity_eligible(entity):
             continue
         if not reference_is_resolvable(scene, entity):
             continue
@@ -2662,6 +2737,9 @@ def pluralize_label(label: str) -> str:
 
 
 def select_split_pool(candidates: Sequence[Dict[str, Any]], target_per_task: int, max_per_scene_per_task: int, seed: int) -> List[Dict[str, Any]]:
+    def scene_cap_reached(counter: Counter[str], scene_id: str) -> bool:
+        return max_per_scene_per_task > 0 and counter[scene_id] >= max_per_scene_per_task
+
     by_task: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for row in candidates:
         by_task[row["task_id"]].append(row)
@@ -2692,7 +2770,7 @@ def select_split_pool(candidates: Sequence[Dict[str, Any]], target_per_task: int
                 for row in rows_by_sector.get(sector, []):
                     if kept >= target_per_task or kept_by_sector[sector] >= quota_by_sector.get(sector, 0):
                         break
-                    if per_scene_counter[row["scene_id"]] >= max_per_scene_per_task:
+                    if scene_cap_reached(per_scene_counter, str(row["scene_id"])):
                         continue
                     selected.append(row)
                     per_scene_counter[row["scene_id"]] += 1
@@ -2704,7 +2782,7 @@ def select_split_pool(candidates: Sequence[Dict[str, Any]], target_per_task: int
                         break
                     if row in selected:
                         continue
-                    if per_scene_counter[row["scene_id"]] >= max_per_scene_per_task:
+                    if scene_cap_reached(per_scene_counter, str(row["scene_id"])):
                         continue
                     selected.append(row)
                     per_scene_counter[row["scene_id"]] += 1
@@ -2715,7 +2793,7 @@ def select_split_pool(candidates: Sequence[Dict[str, Any]], target_per_task: int
         for row in rows:
             if kept >= target_per_task:
                 break
-            if per_scene_counter[row["scene_id"]] >= max_per_scene_per_task:
+            if scene_cap_reached(per_scene_counter, str(row["scene_id"])):
                 continue
             selected.append(row)
             per_scene_counter[row["scene_id"]] += 1
@@ -2756,6 +2834,19 @@ def build_summary(
         counts = Counter(row["ability_group"] for row in rows)
         return dict(sorted(counts.items()))
 
+    def answer_key_counter(rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, int]]:
+        grouped: Dict[str, Counter[str]] = defaultdict(Counter)
+        for row in rows:
+            options = row.get("options") or []
+            answer = str(row.get("answer") or "")
+            if not options or not answer:
+                continue
+            grouped[str(row["task_id"])][answer] += 1
+        return {
+            task_id: {key: int(counter.get(key, 0)) for key in sorted(counter)}
+            for task_id, counter in sorted(grouped.items())
+        }
+
     derived_rows = [row for row in all_candidates if "derived_rotation" in (row.get("metadata") or {})]
     natural_rows = [row for row in all_candidates if "derived_rotation" not in (row.get("metadata") or {})]
     derived_scene_ids = {
@@ -2795,6 +2886,7 @@ def build_summary(
         "candidate_per_task": task_counter(all_candidates),
         "benchmark_public_per_task": task_counter(public_selected),
         "benchmark_public_per_group": group_counter(public_selected),
+        "benchmark_public_answer_key_distribution": answer_key_counter(public_selected),
         "skipped_invalid_metadata_examples": list(skipped_invalid_metadata[:10]),
         "derived_rotation_examples": [
             {
@@ -2809,7 +2901,7 @@ def build_summary(
         "leakage_controls": {
             "training_overlap_expected": "no_scene_overlap_by_construction",
             "template_overlap_control": "benchmark_template_family_separate_from_training_templates",
-            "selection_overlap_control": "per_scene_cap_with_public_release_only",
+            "selection_overlap_control": "optional_per_scene_per_task_cap_with_public_release_only",
             "manual_review_required_for_fragile_tasks": sorted(MANUAL_REVIEW_TASKS),
         },
     }

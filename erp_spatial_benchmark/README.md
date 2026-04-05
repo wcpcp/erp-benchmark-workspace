@@ -638,11 +638,12 @@ python3 erp_spatial_benchmark/build_benchmark.py \
 - `--output-dir`
   - Output directory for all benchmark artifacts, including candidate pools, public prompts, public references, and summary files.
 - `--target-public-per-task`
-  - Target number of selected public benchmark items per task, after candidate generation and per-scene caps.
+  - Target number of selected public benchmark items per task, after candidate generation and optional per-scene caps.
   - A practical default is `250`.
 - `--max-per-scene-per-task`
   - Maximum number of selected items contributed by one scene to one task.
-  - Default `1` prevents a single scene from dominating a task.
+  - Default `0` means no per-scene cap.
+  - Set this to a positive integer only if you explicitly want to stop a few dense scenes from dominating one task.
 - `--seed`
   - Random seed controlling deterministic benchmark item selection.
 - `--scene-manifest`
@@ -696,3 +697,26 @@ For a single-scene smoke test, the most convenient files to inspect are usually:
    - `benchmark_public.jsonl`
    - `benchmark_public_prompts.jsonl`
    - `benchmark_public_references.jsonl`
+
+## Candidate generation policy
+
+The current builder does not treat one scene as “one question” or “one
+ability”. A single scene can contribute many benchmark items across many tasks.
+
+- Anchor coverage
+  - All entities that pass the anchor-pool filter are considered as anchor candidates.
+  - The anchor pool is no longer truncated to a small top-k set during scene-level question generation.
+  - Shared anchor-pool eligibility requires:
+    - `best_score >= 0.65`
+    - `local_reground.pred_score >= 0.65`
+    - a valid resolved BFOV
+    - no match to the global low-value blocked labels such as `tree` or `window`
+
+- Per-scene selection
+  - During candidate generation, one scene can emit multiple items for the same task and many items across different tasks.
+  - During final public selection, `--max-per-scene-per-task 0` keeps this unconstrained by default.
+  - If a positive cap is supplied, it is applied per scene per task, not per scene overall.
+
+- Answer-key balance
+  - All multiple-choice tasks use deterministic option shuffling.
+  - The final public benchmark then applies an additional deterministic answer-key rebalance pass so that `A/B/C/D/E` are not heavily skewed toward one letter inside a task.
