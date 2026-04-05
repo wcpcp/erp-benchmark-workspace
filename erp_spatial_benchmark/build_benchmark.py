@@ -240,32 +240,32 @@ TASK_SPECS: Dict[str, Dict[str, Any]] = {
     "absolute_direction_mc": {
         "ability_group": "spherical_localization_and_panoramic_topology",
         "templates": [
-            "In the complete 360 panorama, which direction sector best contains {target_ref}?",
-            "Which absolute panorama sector best matches {target_ref} in the ERP image?",
+            "In the complete 360 panorama, with the ERP image center treated as the current front direction, which direction sector best contains {target_ref}?",
+            "Using the current ERP view as the reference frame (image center = front), which absolute panorama sector best matches {target_ref}?",
         ],
         "answer_format": "4_way_multiple_choice",
     },
     "relative_direction_mc": {
         "ability_group": "spherical_localization_and_panoramic_topology",
         "templates": [
-            "On the panoramic ring, where does {target_ref} fall relative to {reference_ref}?",
-            "Around the full panorama ring, what is the angular relation of {target_ref} to {reference_ref}?",
+            "On the observer-centered panoramic ring, where does {target_ref} fall relative to {reference_ref}?",
+            "Using observer-centered panorama angles around the current camera, what is the angular relation of {target_ref} to {reference_ref}?",
         ],
         "answer_format": "5_way_multiple_choice",
     },
     "camera_rotation_transform_mc": {
         "ability_group": "viewpoint_conditioned_spatial_updating",
         "templates": [
-            "If the observer turns {angle_deg} degrees to the {turn_direction}, where would {target_ref} appear in the new view?",
-            "After turning {angle_deg} degrees to the {turn_direction}, where does {target_ref} appear in the updated view?",
+            "If the observer stays in place and turns {angle_deg} degrees to the {turn_direction}, where would {target_ref} appear in the new front-centered view?",
+            "After turning {angle_deg} degrees to the {turn_direction} without changing position, where does {target_ref} appear in the updated front-centered view?",
         ],
         "answer_format": "5_way_multiple_choice",
     },
     "object_conditioned_reorientation_mc": {
         "ability_group": "viewpoint_conditioned_spatial_updating",
         "templates": [
-            "Once {facing_ref} is centered as the new front direction, where does {target_ref} lie?",
-            "If you turn to face {facing_ref}, where would {target_ref} appear in the reoriented view?",
+            "Once {facing_ref} is centered as the new front direction, where does {target_ref} lie in that reoriented observer frame?",
+            "If you turn to face {facing_ref}, where would {target_ref} appear in the reoriented front-centered view?",
         ],
         "answer_format": "5_way_multiple_choice",
     },
