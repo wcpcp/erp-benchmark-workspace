@@ -1771,7 +1771,7 @@ def build_absolute_direction_mc(scene: SceneMetadata, target: Entity, anchor_ind
         return None
     neighbors = sector_distractors(sector)
     options = [sector] + neighbors[:3]
-    choices = choice_rows(options)
+    choices, answer_key = shuffled_choice_rows(options, sector, f"{scene.scene_id}:{target.entity_id}:absolute_direction")
     target_ref = contextual_entity_ref(scene, target)
     question = pick_template("absolute_direction_mc", f"{scene.scene_id}:{target.entity_id}").format(target_ref=target_ref)
     return benchmark_item(
@@ -1779,7 +1779,7 @@ def build_absolute_direction_mc(scene: SceneMetadata, target: Entity, anchor_ind
         task_id="absolute_direction_mc",
         item_id=f"{scene.scene_id}_absolute_direction_mc_{target.entity_id}",
         question=question,
-        answer=choices[0]["key"],
+        answer=answer_key,
         answer_text=sector,
         options=choices,
         target_entities=[target.entity_id],
@@ -2062,14 +2062,18 @@ def build_seam_relative_direction_mc(scene: SceneMetadata, target: Entity, quali
         neighbor_ref=neighbor_ref,
         target_ref=target_ref,
     )
-    choices = choice_rows(SEAM_RELATION_OPTIONS)
     answer_text = "adjacent across the boundary"
+    choices, answer_key = shuffled_choice_rows(
+        SEAM_RELATION_OPTIONS,
+        answer_text,
+        f"seam_continuity_mc:relative_direction:{item_key}",
+    )
     return benchmark_item(
         scene=scene,
         task_id="seam_continuity_mc",
         item_id=f"{scene.scene_id}_seam_continuity_mc_relative_direction_{target.entity_id}_{correct.entity_id}",
         question=question,
-        answer=label_to_choice_key(SEAM_RELATION_OPTIONS, answer_text),
+        answer=answer_key,
         answer_text=answer_text,
         options=choices,
         target_entities=[target.entity_id, correct.entity_id],
@@ -2107,14 +2111,18 @@ def build_seam_dedup_count_mc(scene: SceneMetadata, target: Entity, quality: flo
     ).format(
         target_ref=target_ref,
     )
-    choices = choice_rows(SEAM_DEDUP_OPTIONS)
     answer_text = "one continuous object"
+    choices, answer_key = shuffled_choice_rows(
+        SEAM_DEDUP_OPTIONS,
+        answer_text,
+        f"seam_continuity_mc:dedup_count:{item_key}",
+    )
     return benchmark_item(
         scene=scene,
         task_id="seam_continuity_mc",
         item_id=f"{scene.scene_id}_seam_continuity_mc_dedup_count_{target.entity_id}",
         question=question,
-        answer=label_to_choice_key(SEAM_DEDUP_OPTIONS, answer_text),
+        answer=answer_key,
         answer_text=answer_text,
         options=choices,
         target_entities=[target.entity_id],
@@ -2150,14 +2158,18 @@ def build_seam_structure_continuity_mc(scene: SceneMetadata, target: Entity, qua
     ).format(
         target_ref=target_ref,
     )
-    choices = choice_rows(SEAM_STRUCTURE_OPTIONS)
     answer_text = "one continuous structure"
+    choices, answer_key = shuffled_choice_rows(
+        SEAM_STRUCTURE_OPTIONS,
+        answer_text,
+        f"seam_continuity_mc:structure_continuity:{item_key}",
+    )
     return benchmark_item(
         scene=scene,
         task_id="seam_continuity_mc",
         item_id=f"{scene.scene_id}_seam_continuity_mc_structure_continuity_{target.entity_id}",
         question=question,
-        answer=label_to_choice_key(SEAM_STRUCTURE_OPTIONS, answer_text),
+        answer=answer_key,
         answer_text=answer_text,
         options=choices,
         target_entities=[target.entity_id],
@@ -2192,14 +2204,18 @@ def build_seam_same_entity_mc(scene: SceneMetadata, target: Entity, quality: flo
     ).format(
         target_ref=target_ref,
     )
-    choices = choice_rows(SEAM_SAME_ENTITY_OPTIONS)
     answer_text = "same object at the same place in the 360 scene"
+    choices, answer_key = shuffled_choice_rows(
+        SEAM_SAME_ENTITY_OPTIONS,
+        answer_text,
+        f"seam_continuity_mc:same_entity:{item_key}",
+    )
     return benchmark_item(
         scene=scene,
         task_id="seam_continuity_mc",
         item_id=f"{scene.scene_id}_seam_continuity_mc_same_entity_{target.entity_id}",
         question=question,
-        answer=label_to_choice_key(SEAM_SAME_ENTITY_OPTIONS, answer_text),
+        answer=answer_key,
         answer_text=answer_text,
         options=choices,
         target_entities=[target.entity_id],
@@ -2254,17 +2270,21 @@ def build_relative_direction_mc(scene: SceneMetadata, reference: Entity, target:
     item_key = f"{scene.scene_id}:relative_direction_mc:{reference.entity_id}:{target.entity_id}"
     reference_ref = contextual_entity_ref(scene, reference)
     target_ref = contextual_entity_ref(scene, target)
-    choices = choice_rows(PANORAMIC_RELATION_LABELS)
     question = pick_template("relative_direction_mc", f"{scene.scene_id}:{reference.entity_id}:{target.entity_id}").format(
         reference_ref=reference_ref,
         target_ref=target_ref,
+    )
+    choices, answer_key = shuffled_choice_rows(
+        PANORAMIC_RELATION_LABELS,
+        relation,
+        f"{scene.scene_id}:{reference.entity_id}:{target.entity_id}:relative_direction",
     )
     return benchmark_item(
         scene=scene,
         task_id="relative_direction_mc",
         item_id=f"{scene.scene_id}_relative_direction_mc_{reference.entity_id}_{target.entity_id}",
         question=question,
-        answer=label_to_choice_key(PANORAMIC_RELATION_LABELS, relation),
+        answer=answer_key,
         answer_text=relation,
         options=choices,
         target_entities=[reference.entity_id, target.entity_id],
@@ -2296,18 +2316,22 @@ def build_camera_rotation_transform_mc(scene: SceneMetadata, target: Entity, anc
         return None
     item_key = f"{scene.scene_id}:camera_rotation_transform_mc:{target.entity_id}:{rotation_direction}:{angle_deg}"
     target_ref = contextual_entity_ref(scene, target)
-    choices = choice_rows(REORIENTED_RELATION_LABELS)
     question = pick_template("camera_rotation_transform_mc", f"{scene.scene_id}:{target.entity_id}:{rotation_direction}:{angle_deg}").format(
         angle_deg=angle_deg,
         turn_direction=rotation_direction,
         target_ref=target_ref,
+    )
+    choices, answer_key = shuffled_choice_rows(
+        REORIENTED_RELATION_LABELS,
+        relation,
+        f"{scene.scene_id}:{target.entity_id}:{rotation_direction}:{angle_deg}:camera_rotation",
     )
     return benchmark_item(
         scene=scene,
         task_id="camera_rotation_transform_mc",
         item_id=f"{scene.scene_id}_camera_rotation_transform_mc_{target.entity_id}_{rotation_direction}_{angle_deg}",
         question=question,
-        answer=label_to_choice_key(REORIENTED_RELATION_LABELS, relation),
+        answer=answer_key,
         answer_text=relation,
         options=choices,
         target_entities=[target.entity_id],
@@ -2342,17 +2366,21 @@ def build_object_conditioned_reorientation_mc(scene: SceneMetadata, facing: Enti
     item_key = f"{scene.scene_id}:object_conditioned_reorientation_mc:{facing.entity_id}:{target.entity_id}"
     facing_ref = contextual_entity_ref(scene, facing)
     target_ref = contextual_entity_ref(scene, target)
-    choices = choice_rows(REORIENTED_RELATION_LABELS)
     question = pick_template("object_conditioned_reorientation_mc", f"{scene.scene_id}:{facing.entity_id}:{target.entity_id}").format(
         facing_ref=facing_ref,
         target_ref=target_ref,
+    )
+    choices, answer_key = shuffled_choice_rows(
+        REORIENTED_RELATION_LABELS,
+        relation,
+        f"{scene.scene_id}:{facing.entity_id}:{target.entity_id}:object_conditioned_reorientation",
     )
     return benchmark_item(
         scene=scene,
         task_id="object_conditioned_reorientation_mc",
         item_id=f"{scene.scene_id}_object_conditioned_reorientation_mc_{facing.entity_id}_{target.entity_id}",
         question=question,
-        answer=label_to_choice_key(REORIENTED_RELATION_LABELS, relation),
+        answer=answer_key,
         answer_text=relation,
         options=choices,
         target_entities=[facing.entity_id, target.entity_id],
@@ -2535,9 +2563,9 @@ def build_observer_distance_choice(scene: SceneMetadata, anchors: Sequence[Dict[
     closest = min(selected, key=lambda entity: float(entity.entity_center_depth))
     item_key = f"{scene.scene_id}:observer_distance_choice:{selected[0].entity_id}:{selected[-1].entity_id}"
     option_texts = [contextual_entity_ref(scene, entity) for entity in selected]
-    choices = choice_rows(option_texts)
+    correct_text = option_texts[[entity.entity_id for entity in selected].index(closest.entity_id)]
+    choices, answer_key = shuffled_choice_rows(option_texts, correct_text, item_key)
     question = pick_template("observer_distance_choice", f"{scene.scene_id}:{selected[0].entity_id}:{selected[-1].entity_id}")
-    answer_key = choices[[entity.entity_id for entity in selected].index(closest.entity_id)]["key"]
     avg_quality = sum(float(score_entity(entity, Counter(e.label for e in scene.entities), scene)) for entity in selected) / len(selected)
     return benchmark_item(
         scene=scene,
@@ -2545,7 +2573,7 @@ def build_observer_distance_choice(scene: SceneMetadata, anchors: Sequence[Dict[
         item_id=f"{scene.scene_id}_observer_distance_choice_{selected[0].entity_id}_{selected[-1].entity_id}",
         question=question,
         answer=answer_key,
-        answer_text=option_texts[[entity.entity_id for entity in selected].index(closest.entity_id)],
+        answer_text=correct_text,
         options=choices,
         target_entities=[entity.entity_id for entity in selected],
         metadata={
@@ -2570,7 +2598,7 @@ def build_relative_3d_position_mc(scene: SceneMetadata, entity_a: Entity, entity
     entity_a_ref = contextual_entity_ref(scene, entity_a)
     entity_b_ref = contextual_entity_ref(scene, entity_b)
     options = relative_3d_choices(entity_a, entity_b, relation, parts)
-    choices = choice_rows(options)
+    choices, answer_key = shuffled_choice_rows(options, relation, item_key)
     question = pick_template("relative_3d_position_mc", f"{scene.scene_id}:{entity_a.entity_id}:{entity_b.entity_id}").format(
         entity_a_ref=entity_a_ref,
         entity_b_ref=entity_b_ref,
@@ -2585,7 +2613,7 @@ def build_relative_3d_position_mc(scene: SceneMetadata, entity_a: Entity, entity
         task_id="relative_3d_position_mc",
         item_id=f"{scene.scene_id}_relative_3d_position_mc_{entity_a.entity_id}_{entity_b.entity_id}",
         question=question,
-        answer=label_to_choice_key(options, relation),
+        answer=answer_key,
         answer_text=relation,
         options=choices,
         target_entities=[entity_a.entity_id, entity_b.entity_id],

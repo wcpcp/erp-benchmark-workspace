@@ -490,6 +490,10 @@ The script writes:
 - `summary.json`
 - `derived_metadata/*.json` when derived stress items are synthesized
 
+For all multiple-choice tasks, option order is stable-shuffled per item. This
+prevents global answer-position bias such as many items always having answer
+`A`, while keeping rebuilds deterministic for the same data and code version.
+
 If natural absolute-direction, seam, or polar cases are too scarce, the builder now automatically
 creates derived stress samples:
 
