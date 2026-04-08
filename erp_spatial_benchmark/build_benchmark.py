@@ -2950,4 +2950,3 @@ def build_summary(
 
 if __name__ == "__main__":
     raise SystemExit(main())
-    enabled_tasks = normalize_task_filter(args.tasks)
