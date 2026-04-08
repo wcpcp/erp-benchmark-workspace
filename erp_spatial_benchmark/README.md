@@ -688,6 +688,53 @@ For a single-scene smoke test, the most convenient files to inspect are usually:
 - `benchmark_public_references.jsonl`
 - `summary.json`
 
+## Prune released items
+
+If you manually review rendered benchmark images and decide that some public
+items should be removed, use:
+
+- [scripts/prune_benchmark_jsonl.py](/Users/wcp/code/erp_data_pipeline/benchmark/scripts/prune_benchmark_jsonl.py)
+
+This script supports the two delete-list patterns used in our review workflow:
+
+- an exact rendered filename such as `.../foo.jpg`
+  - removes the single matching benchmark item whose `item_id` corresponds to that rendered image
+- a prefix ending in `*` such as `.../source_scene_id*`
+  - removes all benchmark items derived from that source prefix, including rotated or task-specific variants
+
+Example `delete.txt` entries:
+
+```text
+/workspace/.../images/panoramax__0b046ad7-bec7-4ec3-ab56-8a4ff66befca__seam_yaw_-21_E000027_seam_continuity_mc_dedup_count_E000027.jpg
+/workspace/.../images/openverse__5ddee573-0ad7-4dd4-b0e7-0100438e5259*
+```
+
+Recommended usage is to prune the public benchmark, prompts, and references
+together so the three JSONL files remain aligned:
+
+```bash
+python3 scripts/prune_benchmark_jsonl.py \
+  --jsonl \
+  /path/to/erp_spatial_benchmark_out/benchmark_public.jsonl \
+  /path/to/erp_spatial_benchmark_out/benchmark_public_prompts.jsonl \
+  /path/to/erp_spatial_benchmark_out/benchmark_public_references.jsonl \
+  --delete-txt /path/to/erp_spatial_benchmark_out/delete.txt \
+  --in-place \
+  --backup
+```
+
+Behavior:
+
+- without `--in-place`, the script writes sibling `*.filtered.jsonl` files
+- with `--in-place`, the input JSONL files are overwritten
+- with `--backup`, each overwritten JSONL is first copied to `*.bak`
+
+The script prints a JSON summary showing:
+
+- how many delete rules were loaded
+- how many rows were removed from each JSONL file
+- example removed `item_id` values and the delete rule that matched them
+
 ## Recommended release workflow
 
 1. Build the full candidate pool.

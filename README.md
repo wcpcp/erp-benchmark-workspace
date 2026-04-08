@@ -353,6 +353,36 @@ python3 erp_spatial_benchmark/build_benchmark.py \
 - `derived_metadata/`
 - `skipped_invalid_metadata.jsonl`
 
+### 如何删除人工判坏的 public items
+
+如果你在可视化复核后整理出一个 `delete.txt`，可以用：
+
+- [scripts/prune_benchmark_jsonl.py](/Users/wcp/code/erp_data_pipeline/benchmark/scripts/prune_benchmark_jsonl.py)
+
+推荐一起同步裁剪：
+
+- `benchmark_public.jsonl`
+- `benchmark_public_prompts.jsonl`
+- `benchmark_public_references.jsonl`
+
+示例：
+
+```bash
+python3 scripts/prune_benchmark_jsonl.py \
+  --jsonl \
+  /path/to/erp_spatial_benchmark_out/benchmark_public.jsonl \
+  /path/to/erp_spatial_benchmark_out/benchmark_public_prompts.jsonl \
+  /path/to/erp_spatial_benchmark_out/benchmark_public_references.jsonl \
+  --delete-txt /path/to/erp_spatial_benchmark_out/delete.txt \
+  --in-place \
+  --backup
+```
+
+这个脚本支持两种 delete 规则：
+
+- 精确 `.jpg` 文件名：删除单条 item
+- 以 `*` 结尾的源图前缀：删除这一整组相关 derived/task item
+
 ### 如何拿它做推理
 
 你的模型应读取：
