@@ -638,6 +638,17 @@ python3 erp_spatial_benchmark/build_benchmark.py \
   --seed 20260327
 ```
 
+If you only want to build one or a few task types, pass `--tasks`:
+
+```bash
+python3 erp_spatial_benchmark/build_benchmark.py \
+  --input-root /path/to/erp_benchmark_metadata \
+  --output-dir /path/to/erp_spatial_benchmark_out \
+  --tasks relative_direction_mc object_conditioned_reorientation_mc \
+  --target-public-per-task 250 \
+  --seed 20260327
+```
+
 ### What the main arguments mean
 
 - `--input-root`
@@ -817,6 +828,14 @@ ability”. A single scene can contribute many benchmark items across many tasks
   - During candidate generation, one scene can emit multiple items for the same task and many items across different tasks.
   - During final public selection, `--max-per-scene-per-task 0` keeps this unconstrained by default.
   - If a positive cap is supplied, it is applied per scene per task, not per scene overall.
+
+- Relation-pair coverage
+  - Relation tasks no longer stop after a tiny fixed partner subset such as top-4 partners.
+  - For each eligible anchor, all candidate partners are enumerated and then filtered by the task-specific geometric and linguistic rules.
+  - This especially affects:
+    - `relative_direction_mc`
+    - `object_conditioned_reorientation_mc`
+    - `relative_3d_position_mc`
 
 - Answer-key balance
   - All multiple-choice tasks use deterministic option shuffling.

@@ -343,6 +343,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=20260327, help="Random seed for deterministic splitting and selection.")
     parser.add_argument(
+        "--tasks",
+        nargs="*",
+        default=[],
+        help="Optional task-id allowlist. When set, only these task types are generated and selected.",
+    )
+    parser.add_argument(
         "--fail-on-invalid-json",
         action="store_true",
         help="Fail immediately when a metadata.json file is empty or invalid. By default invalid files are skipped.",
@@ -350,11 +356,31 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def normalize_task_filter(raw_tasks: Sequence[str]) -> Optional[set[str]]:
+    normalized: set[str] = set()
+    for raw in raw_tasks:
+        for part in str(raw).split(","):
+            task_id = part.strip()
+            if task_id:
+                normalized.add(task_id)
+    if not normalized:
+        return None
+    unknown = sorted(task_id for task_id in normalized if task_id not in TASK_SPECS)
+    if unknown:
+        raise ValueError(f"Unknown task ids in --tasks: {', '.join(unknown)}")
+    return normalized
+
+
+def task_enabled(task_id: str, enabled_tasks: Optional[set[str]]) -> bool:
+    return enabled_tasks is None or task_id in enabled_tasks
+
+
 def main() -> int:
     args = parse_args()
     input_root = Path(args.input_root)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    enabled_tasks = normalize_task_filter(args.tasks)
 
     scene_manifest = load_scene_manifest(args.scene_manifest)
     scene_paths = list(discover_metadata_files(input_root))
@@ -383,7 +409,7 @@ def main() -> int:
         info = build_scene_side_info(scene, scene_manifest)
         scene_infos[scene.scene_id] = info
         scenes.append(scene)
-        candidates = generate_scene_candidates(scene)
+        candidates = generate_scene_candidates(scene, enabled_tasks=enabled_tasks)
         all_candidates.extend(candidates)
         if idx % 25 == 0 or idx == len(scene_paths):
             print(json.dumps({"stage": "candidates", "processed_scenes": idx, "candidate_count": len(all_candidates)}, ensure_ascii=False))
@@ -395,6 +421,7 @@ def main() -> int:
         output_dir,
         target_public_per_task=int(args.target_public_per_task),
         seed=split_seed,
+        enabled_tasks=enabled_tasks,
     )
     if derived_rows:
         all_candidates.extend(derived_rows)
@@ -498,7 +525,7 @@ def build_scene_side_info(scene: SceneMetadata, manifest: Dict[str, SceneSideInf
     )
 
 
-def generate_scene_candidates(scene: SceneMetadata) -> List[Dict[str, Any]]:
+def generate_scene_candidates(scene: SceneMetadata, enabled_tasks: Optional[set[str]] = None) -> List[Dict[str, Any]]:
     candidates: List[Dict[str, Any]] = []
     label_counts = Counter(entity.label for entity in scene.entities)
     anchors = [
@@ -511,39 +538,50 @@ def generate_scene_candidates(scene: SceneMetadata) -> List[Dict[str, Any]]:
     for anchor_index, anchor_payload in enumerate(anchors):
         anchor = anchor_payload["entity"]
         quality = float(score_entity(anchor, label_counts, scene))
-        for row in [
-            build_referring_grounding_bfov(scene, anchor, anchors, anchor_index, quality),
-            build_absolute_direction_mc(scene, anchor, anchor_index, quality),
-            build_polar_shape_recovery(scene, anchor, anchor_index, quality),
-            build_polar_shape_matching(scene, anchor, anchor_index, quality),
-            build_polar_cross_latitude_matching(scene, anchor, anchor_index, quality),
-        ]:
+        anchor_rows: List[Optional[Dict[str, Any]]] = []
+        if task_enabled("referring_grounding_bfov", enabled_tasks):
+            anchor_rows.append(build_referring_grounding_bfov(scene, anchor, anchors, anchor_index, quality))
+        if task_enabled("absolute_direction_mc", enabled_tasks):
+            anchor_rows.append(build_absolute_direction_mc(scene, anchor, anchor_index, quality))
+        if task_enabled("polar_shape_recovery_mc", enabled_tasks):
+            anchor_rows.append(build_polar_shape_recovery(scene, anchor, anchor_index, quality))
+        if task_enabled("polar_shape_matching_mc", enabled_tasks):
+            anchor_rows.append(build_polar_shape_matching(scene, anchor, anchor_index, quality))
+        if task_enabled("polar_cross_latitude_matching_mc", enabled_tasks):
+            anchor_rows.append(build_polar_cross_latitude_matching(scene, anchor, anchor_index, quality))
+        for row in anchor_rows:
             if row and row["item_id"] not in used_item_ids:
                 candidates.append(row)
                 used_item_ids.add(row["item_id"])
 
-        for row in build_seam_continuity_items(scene, anchor, anchors, anchor_index, quality):
-            if row and row["item_id"] not in used_item_ids:
-                candidates.append(row)
-                used_item_ids.add(row["item_id"])
-
-        partners = choose_relation_partners(anchor, scene, max_partners=4)
-        for partner_index, partner_payload in enumerate(partners):
-            partner = partner_payload["entity"]
-            for row in [
-                build_relative_direction_mc(scene, anchor, partner, anchor_index, partner_index, quality),
-                build_camera_rotation_transform_mc(scene, anchor, anchor_index, partner_index, quality),
-                build_object_conditioned_reorientation_mc(scene, anchor, partner, anchor_index, partner_index, quality),
-                build_relative_3d_position_mc(scene, anchor, partner, anchor_index, partner_index, quality),
-            ]:
+        if task_enabled("seam_continuity_mc", enabled_tasks):
+            for row in build_seam_continuity_items(scene, anchor, anchors, anchor_index, quality):
                 if row and row["item_id"] not in used_item_ids:
                     candidates.append(row)
                     used_item_ids.add(row["item_id"])
 
-        observer_choice = build_observer_distance_choice(scene, anchors, anchor_index)
-        if observer_choice and observer_choice["item_id"] not in used_item_ids:
-            candidates.append(observer_choice)
-            used_item_ids.add(observer_choice["item_id"])
+        partners = choose_relation_partners(anchor, scene, max_partners=0)
+        for partner_index, partner_payload in enumerate(partners):
+            partner = partner_payload["entity"]
+            relation_rows: List[Optional[Dict[str, Any]]] = []
+            if task_enabled("relative_direction_mc", enabled_tasks):
+                relation_rows.append(build_relative_direction_mc(scene, anchor, partner, anchor_index, partner_index, quality))
+            if task_enabled("camera_rotation_transform_mc", enabled_tasks):
+                relation_rows.append(build_camera_rotation_transform_mc(scene, anchor, anchor_index, partner_index, quality))
+            if task_enabled("object_conditioned_reorientation_mc", enabled_tasks):
+                relation_rows.append(build_object_conditioned_reorientation_mc(scene, anchor, partner, anchor_index, partner_index, quality))
+            if task_enabled("relative_3d_position_mc", enabled_tasks):
+                relation_rows.append(build_relative_3d_position_mc(scene, anchor, partner, anchor_index, partner_index, quality))
+            for row in relation_rows:
+                if row and row["item_id"] not in used_item_ids:
+                    candidates.append(row)
+                    used_item_ids.add(row["item_id"])
+
+        if task_enabled("observer_distance_choice", enabled_tasks):
+            observer_choice = build_observer_distance_choice(scene, anchors, anchor_index)
+            if observer_choice and observer_choice["item_id"] not in used_item_ids:
+                candidates.append(observer_choice)
+                used_item_ids.add(observer_choice["item_id"])
 
     return candidates
 
@@ -1639,6 +1677,7 @@ def augment_representation_stress_candidates(
     *,
     target_public_per_task: int,
     seed: int,
+    enabled_tasks: Optional[set[str]],
 ) -> List[Dict[str, Any]]:
     by_task = Counter(row["task_id"] for row in all_candidates)
     derived_rows: List[Dict[str, Any]] = []
@@ -1671,7 +1710,7 @@ def augment_representation_stress_candidates(
         sector: max(0, absolute_targets[sector] - absolute_existing_by_sector.get(sector, 0))
         for sector in ABSOLUTE_DIRECTION_CHALLENGE_SECTORS
     }
-    if any(value > 0 for value in absolute_needed_by_sector.values()):
+    if task_enabled("absolute_direction_mc", enabled_tasks) and any(value > 0 for value in absolute_needed_by_sector.values()):
         produced_by_sector: Counter[str] = Counter()
         for scene in scenes:
             if not any(absolute_needed_by_sector[sector] > produced_by_sector[sector] for sector in ABSOLUTE_DIRECTION_CHALLENGE_SECTORS):
@@ -1716,7 +1755,7 @@ def augment_representation_stress_candidates(
                         break
 
     seam_needed = max(0, max(DERIVED_MIN_SEAM_CANDIDATES, target_public_per_task) - by_task.get("seam_continuity_mc", 0))
-    if seam_needed > 0:
+    if task_enabled("seam_continuity_mc", enabled_tasks) and seam_needed > 0:
         produced = 0
         for scene in scenes:
             if produced >= seam_needed:
@@ -1756,17 +1795,17 @@ def augment_representation_stress_candidates(
         task_id: max(0, max(DERIVED_MIN_POLAR_CANDIDATES, target_public_per_task) - by_task.get(task_id, 0))
         for task_id in polar_task_ids
     }
-    if any(value > 0 for value in polar_needed_by_task.values()):
+    if any(task_enabled(task_id, enabled_tasks) and value > 0 for task_id, value in polar_needed_by_task.items()):
         produced_by_task: Counter[str] = Counter()
         for scene in scenes:
-            if all(produced_by_task[task_id] >= polar_needed_by_task[task_id] for task_id in polar_task_ids):
+            if all((not task_enabled(task_id, enabled_tasks)) or (produced_by_task[task_id] >= polar_needed_by_task[task_id]) for task_id in polar_task_ids):
                 break
             produced_for_scene = 0
             used_target_ids: set[str] = set()
             info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
             targets = derived_candidate_entities(scene)
             for target in targets:
-                if all(produced_by_task[task_id] >= polar_needed_by_task[task_id] for task_id in polar_task_ids):
+                if all((not task_enabled(task_id, enabled_tasks)) or (produced_by_task[task_id] >= polar_needed_by_task[task_id]) for task_id in polar_task_ids):
                     break
                 if produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
                     break
@@ -1794,6 +1833,8 @@ def augment_representation_stress_candidates(
                     if row is None:
                         continue
                     task_id = str(row["task_id"])
+                    if not task_enabled(task_id, enabled_tasks):
+                        continue
                     if produced_by_task[task_id] >= polar_needed_by_task[task_id]:
                         continue
                     if add_row(row, derived_scene, info):
@@ -2909,3 +2950,4 @@ def build_summary(
 
 if __name__ == "__main__":
     raise SystemExit(main())
+    enabled_tasks = normalize_task_filter(args.tasks)

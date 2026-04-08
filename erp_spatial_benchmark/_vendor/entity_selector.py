@@ -220,7 +220,7 @@ def choose_relation_partners(anchor: Entity, scene: SceneMetadata, max_partners:
         ),
     )
     for item in fallback:
-        if len(selected) >= max_partners:
+        if max_partners > 0 and len(selected) >= max_partners:
             break
         if item["entity"].entity_id in used_ids:
             continue
@@ -229,7 +229,9 @@ def choose_relation_partners(anchor: Entity, scene: SceneMetadata, max_partners:
         selected.append(enriched)
         used_ids.add(item["entity"].entity_id)
 
-    return selected[:max_partners]
+    if max_partners > 0:
+        return selected[:max_partners]
+    return selected
 
 
 def summarize_label_distribution(entities: Iterable[Entity]) -> Dict[str, int]:
