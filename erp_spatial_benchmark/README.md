@@ -251,6 +251,13 @@ These rules apply broadly across the benchmark before task-specific logic runs.
   - `local_reground.pred_score >= 0.65`
   - valid BFOV must exist
   - area must be non-trivial
+- **Quality ranking**
+  - `quality_score` is now intentionally simple.
+  - It only uses:
+    - `best_score`
+    - `local_reground.pred_score`
+  - Current formula:
+    - `quality_score = 0.5 * best_score + 0.5 * local_reground.pred_score`
 - **Low-value semantic category filtering**
   - Anchor-level blocked substrings:
     - `tree`
