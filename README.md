@@ -383,6 +383,52 @@ python3 scripts/prune_benchmark_jsonl.py \
 - 精确 `.jpg` 文件名：删除单条 item
 - 以 `*` 结尾的源图前缀：删除这一整组相关 derived/task item
 
+### 如何从汇总 JSON 中挑出固定配额子集
+
+如果你已经把所有处理后的数据合并到一个或多个大 JSONL 里，并且希望：
+
+- 每个 `task` 先尽量保留 `250` 条
+- 已经够 `250` 的任务先冻结下来
+- 不够 `250` 的任务后续再补充新的 JSONL 继续 top-up
+
+可以用：
+
+- [scripts/select_benchmark_subset.py](/Users/wcp/code/erp_data_pipeline/benchmark/scripts/select_benchmark_subset.py)
+
+这个脚本会先做分布分析，再输出：
+
+- `selected.jsonl`
+  - 当前冻结下来的 released subset
+- `remaining_pool.jsonl`
+  - 还没被选中的剩余池子
+- `selection_report.json`
+  - 每个任务的 pool 数量、selected 数量、natural/derived 分布、manual review 数量、缺口等统计
+
+首次选择示例：
+
+```bash
+python3 scripts/select_benchmark_subset.py \
+  --pool-jsonl /path/to/merged_pool.jsonl \
+  --output-dir /path/to/selection_out \
+  --target-per-task 250
+```
+
+如果你后续又补充了一批新 JSONL，希望在保留现有 `selected.jsonl` 的前提下继续补齐缺口：
+
+```bash
+python3 scripts/select_benchmark_subset.py \
+  --pool-jsonl /path/to/merged_pool.jsonl /path/to/new_supplement.jsonl \
+  --existing-selected /path/to/selection_out/selected.jsonl \
+  --output-dir /path/to/selection_out_v2 \
+  --target-per-task 250
+```
+
+这个模式下：
+
+- 旧的 `selected.jsonl` 会被完整保留
+- 已选中的条目会计入每个 task 的现有数量
+- 脚本只会继续从更大的 pool 中补那些还没到 `250` 的任务
+
 ### 如何拿它做推理
 
 你的模型应读取：

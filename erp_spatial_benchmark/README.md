@@ -735,6 +735,53 @@ The script prints a JSON summary showing:
 - how many rows were removed from each JSONL file
 - example removed `item_id` values and the delete rule that matched them
 
+## Build a fixed-size released subset from a merged pool
+
+If you already have a large merged JSONL pool and want to keep exactly a target
+quota per task, use:
+
+- [scripts/select_benchmark_subset.py](/Users/wcp/code/erp_data_pipeline/benchmark/scripts/select_benchmark_subset.py)
+
+This workflow is useful when:
+
+- some tasks already have more than `250` items
+- some tasks still have fewer than `250` items
+- you want to freeze a current released subset now and top it up later as new items arrive
+
+Example:
+
+```bash
+python3 scripts/select_benchmark_subset.py \
+  --pool-jsonl /path/to/merged_pool.jsonl \
+  --output-dir /path/to/selection_out \
+  --target-per-task 250
+```
+
+This writes:
+
+- `selected.jsonl`
+  - the current released subset, up to the task quota
+- `remaining_pool.jsonl`
+  - the unused pool rows that were not selected this round
+- `selection_report.json`
+  - per-task counts, natural/derived split, manual-review counts, deficits, and overflow
+
+Incremental top-up workflow:
+
+```bash
+python3 scripts/select_benchmark_subset.py \
+  --pool-jsonl /path/to/old_pool.jsonl /path/to/new_supplement.jsonl \
+  --existing-selected /path/to/selection_out/selected.jsonl \
+  --output-dir /path/to/selection_out_v2 \
+  --target-per-task 250
+```
+
+In this mode:
+
+- the previous `selected.jsonl` is preserved
+- existing items count toward each task quota
+- only the remaining deficits are filled from the newly expanded pool
+
 ## Recommended release workflow
 
 1. Build the full candidate pool.
