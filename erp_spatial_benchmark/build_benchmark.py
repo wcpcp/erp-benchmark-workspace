@@ -61,6 +61,20 @@ ABSOLUTE_DIRECTION_PUBLIC_WEIGHTS = {
     "back-left": 0.2666666666,
     "left": 0.10,
 }
+RELATIVE_DIRECTION_PUBLIC_WEIGHTS = {
+    "right": 0.10,
+    "back-right": 0.2666666667,
+    "opposite": 0.2666666667,
+    "back-left": 0.2666666666,
+    "left": 0.10,
+}
+OBJECT_REORIENTATION_PUBLIC_WEIGHTS = {
+    "right": 0.10,
+    "back-right": 0.2666666667,
+    "behind": 0.2666666667,
+    "back-left": 0.2666666666,
+    "left": 0.10,
+}
 PANORAMIC_RELATION_LABELS = ["right", "back-right", "opposite", "back-left", "left"]
 REORIENTED_RELATION_LABELS = ["right", "back-right", "behind", "back-left", "left"]
 SHAPE_FALLBACK_POOL = [
@@ -1644,6 +1658,20 @@ def absolute_direction_target_counts(target_per_task: int) -> Dict[str, int]:
     return counts
 
 
+def weighted_target_counts(target_per_task: int, weights: Dict[str, float]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    running_total = 0
+    ordered = list(weights.items())
+    for idx, (label, weight) in enumerate(ordered):
+        if idx == len(ordered) - 1:
+            counts[label] = max(0, target_per_task - running_total)
+        else:
+            value = int(round(target_per_task * weight))
+            counts[label] = value
+            running_total += value
+    return counts
+
+
 def derived_candidate_entities(
     scene: SceneMetadata,
     *,
@@ -1949,6 +1977,30 @@ def seam_primary_side(entity: Entity, scene: SceneMetadata) -> Optional[str]:
     if not infer_seam_adjacency(entity, scene):
         return None
     return "left" if yaw_deg_360(entity) >= 180.0 else "right"
+
+
+def relation_pair_boundary_metadata(scene: SceneMetadata, reference: Entity, target: Entity) -> Dict[str, Any]:
+    reference_side = seam_primary_side(reference, scene)
+    target_side = seam_primary_side(target, scene)
+    boundary_pair = reference_side is not None and target_side is not None
+    cross_boundary_pair = boundary_pair and reference_side != target_side
+    return {
+        "reference_boundary_side": reference_side or "",
+        "target_boundary_side": target_side or "",
+        "boundary_pair": bool(boundary_pair),
+        "cross_boundary_pair": bool(cross_boundary_pair),
+    }
+
+
+def relation_selection_sort_key(row: Dict[str, Any], seed: int) -> Tuple[Any, ...]:
+    metadata = row.get("metadata") or {}
+    cross_boundary = bool(metadata.get("cross_boundary_pair"))
+    boundary_pair = bool(metadata.get("boundary_pair"))
+    return (
+        0 if cross_boundary else 1 if boundary_pair else 2,
+        -float(row.get("quality_score", 0.0)),
+        stable_hash(f"{seed}:{row['item_id']}"),
+    )
 
 
 def wrap_yaw_gap_deg(entity_a: Entity, entity_b: Entity) -> float:
@@ -2386,6 +2438,7 @@ def build_relative_direction_mc(scene: SceneMetadata, reference: Entity, target:
     item_key = f"{scene.scene_id}:relative_direction_mc:{reference.entity_id}:{target.entity_id}"
     reference_ref = contextual_entity_ref(scene, reference)
     target_ref = contextual_entity_ref(scene, target)
+    boundary_meta = relation_pair_boundary_metadata(scene, reference, target)
     question = pick_template("relative_direction_mc", f"{scene.scene_id}:{reference.entity_id}:{target.entity_id}").format(
         reference_ref=reference_ref,
         target_ref=target_ref,
@@ -2410,10 +2463,15 @@ def build_relative_direction_mc(scene: SceneMetadata, reference: Entity, target:
             "reference_yaw_deg": round(yaw_deg_360(reference), 1),
             "target_yaw_deg": round(yaw_deg_360(target), 1),
             "delta_yaw_deg": round(delta, 2),
+            **boundary_meta,
         },
         difficulty=difficulty_from_margin(margin),
         quality_score=(quality + float(score_entity(target, Counter(e.label for e in scene.entities), scene))) / 2.0,
-        diagnostic_slices=sorted(set(slices_for_entity(reference) + slices_for_entity(target))),
+        diagnostic_slices=dedupe_keep_order(
+            slices_for_entity(reference)
+            + slices_for_entity(target)
+            + (["boundary_pair"] if boundary_meta["boundary_pair"] else [])
+        ),
     )
 
 
@@ -2482,6 +2540,7 @@ def build_object_conditioned_reorientation_mc(scene: SceneMetadata, facing: Enti
     item_key = f"{scene.scene_id}:object_conditioned_reorientation_mc:{facing.entity_id}:{target.entity_id}"
     facing_ref = contextual_entity_ref(scene, facing)
     target_ref = contextual_entity_ref(scene, target)
+    boundary_meta = relation_pair_boundary_metadata(scene, facing, target)
     question = pick_template("object_conditioned_reorientation_mc", f"{scene.scene_id}:{facing.entity_id}:{target.entity_id}").format(
         facing_ref=facing_ref,
         target_ref=target_ref,
@@ -2506,10 +2565,15 @@ def build_object_conditioned_reorientation_mc(scene: SceneMetadata, facing: Enti
             "facing_yaw_deg": round(yaw_deg_360(facing), 1),
             "target_yaw_deg": round(yaw_deg_360(target), 1),
             "delta_yaw_deg": round(delta, 2),
+            **boundary_meta,
         },
         difficulty=difficulty_from_margin(margin),
         quality_score=(quality + float(score_entity(target, Counter(e.label for e in scene.entities), scene))) / 2.0,
-        diagnostic_slices=dedupe_keep_order(slices_for_entity(facing) + slices_for_entity(target)),
+        diagnostic_slices=dedupe_keep_order(
+            slices_for_entity(facing)
+            + slices_for_entity(target)
+            + (["boundary_pair"] if boundary_meta["boundary_pair"] else [])
+        ),
     )
 
 
@@ -2818,6 +2882,45 @@ def select_split_pool(candidates: Sequence[Dict[str, Any]], target_per_task: int
                     kept += 1
                     kept_by_sector[sector] += 1
             if kept < target_per_task:
+                for row in rows:
+                    if kept >= target_per_task:
+                        break
+                    if row in selected:
+                        continue
+                    if scene_cap_reached(per_scene_counter, str(row["scene_id"])):
+                        continue
+                    selected.append(row)
+                    per_scene_counter[row["scene_id"]] += 1
+                    kept += 1
+            continue
+        if task_id in {"relative_direction_mc", "object_conditioned_reorientation_mc"}:
+            quota_by_label = weighted_target_counts(
+                target_per_task,
+                RELATIVE_DIRECTION_PUBLIC_WEIGHTS if task_id == "relative_direction_mc" else OBJECT_REORIENTATION_PUBLIC_WEIGHTS,
+            )
+            rows_by_label: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            for row in rows:
+                answer_text = str(row.get("answer_text", ""))
+                rows_by_label[answer_text].append(row)
+            for label_rows in rows_by_label.values():
+                label_rows.sort(key=lambda row: relation_selection_sort_key(row, seed))
+
+            per_scene_counter = Counter()
+            kept = 0
+            kept_by_label: Counter[str] = Counter()
+            ordered_labels = ["back-right", "opposite" if task_id == "relative_direction_mc" else "behind", "back-left", "left", "right"]
+            for label in ordered_labels:
+                for row in rows_by_label.get(label, []):
+                    if kept >= target_per_task or kept_by_label[label] >= quota_by_label.get(label, 0):
+                        break
+                    if scene_cap_reached(per_scene_counter, str(row["scene_id"])):
+                        continue
+                    selected.append(row)
+                    per_scene_counter[row["scene_id"]] += 1
+                    kept += 1
+                    kept_by_label[label] += 1
+            if kept < target_per_task:
+                rows.sort(key=lambda row: relation_selection_sort_key(row, seed))
                 for row in rows:
                     if kept >= target_per_task:
                         break

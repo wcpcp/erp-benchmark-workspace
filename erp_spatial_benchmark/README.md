@@ -339,6 +339,11 @@ These rules apply broadly across the benchmark before task-specific logic runs.
 - `abs(delta_yaw)` must be large enough to define a clear relation.
 - Effective margin to relation boundaries must be at least `15°` after BFOV
   clearance using the larger target/reference horizontal extent.
+- Final public selection intentionally favors harder relations:
+  - about `80%` combined across `back-right`, `opposite`, and `back-left`
+  - about `20%` combined across the simpler `left` and `right` cases
+- If both objects lie near opposite ERP boundaries, those cross-boundary pairs
+  are prioritized during final selection.
 
 #### `camera_rotation_transform_mc`
 
@@ -353,6 +358,10 @@ These rules apply broadly across the benchmark before task-specific logic runs.
   size filter.
 - The reoriented relation must remain stable after BFOV-aware clearance.
 - Effective margin must be at least `15°`.
+- Final public selection follows the same hard-case preference:
+  - about `80%` combined across `back-right`, `behind`, and `back-left`
+  - about `20%` combined across `left` and `right`
+- Cross-boundary boundary-pair cases are also prioritized when available.
 
 #### `observer_distance_choice`
 
@@ -836,6 +845,7 @@ ability”. A single scene can contribute many benchmark items across many tasks
     - `relative_direction_mc`
     - `object_conditioned_reorientation_mc`
     - `relative_3d_position_mc`
+  - For `relative_direction_mc` and `object_conditioned_reorientation_mc`, final public selection also prefers harder backward relations and seam-boundary pairs over easy front-centered left/right cases.
 
 - Answer-key balance
   - All multiple-choice tasks use deterministic option shuffling.
