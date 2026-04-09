@@ -339,6 +339,9 @@ These rules apply broadly across the benchmark before task-specific logic runs.
 - `abs(delta_yaw)` must be large enough to define a clear relation.
 - Effective margin to relation boundaries must be at least `15°` after BFOV
   clearance using the larger target/reference horizontal extent.
+- During final public selection, this task is jointly selected with
+  `object_conditioned_reorientation_mc`, and the two tasks are not allowed to
+  share the same ERP image plus the same ordered entity pair.
 - Final public selection intentionally favors harder relations:
   - about `80%` combined across `back-right`, `opposite`, and `back-left`
   - about `20%` combined across the simpler `left` and `right` cases
@@ -358,6 +361,9 @@ These rules apply broadly across the benchmark before task-specific logic runs.
   size filter.
 - The reoriented relation must remain stable after BFOV-aware clearance.
 - Effective margin must be at least `15°`.
+- During final public selection, this task is jointly selected with
+  `relative_direction_mc`, and the two tasks are not allowed to share the same
+  ERP image plus the same ordered entity pair.
 - Final public selection follows the same hard-case preference:
   - about `80%` combined across `back-right`, `behind`, and `back-left`
   - about `20%` combined across `left` and `right`
@@ -846,6 +852,7 @@ ability”. A single scene can contribute many benchmark items across many tasks
     - `object_conditioned_reorientation_mc`
     - `relative_3d_position_mc`
   - For `relative_direction_mc` and `object_conditioned_reorientation_mc`, final public selection also prefers harder backward relations and seam-boundary pairs over easy front-centered left/right cases.
+  - Those two relation tasks are also jointly selected so the released public set does not reuse the same ERP image and the same ordered entity pair in both tasks.
 
 - Answer-key balance
   - All multiple-choice tasks use deterministic option shuffling.

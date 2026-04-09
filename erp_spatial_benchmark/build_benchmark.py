@@ -2003,6 +2003,139 @@ def relation_selection_sort_key(row: Dict[str, Any], seed: int) -> Tuple[Any, ..
     )
 
 
+def relation_pair_signature(row: Dict[str, Any]) -> Tuple[str, Tuple[str, ...]]:
+    image_key = str(row.get("image_path") or row.get("scene_id") or "")
+    entity_ids = tuple(str(entity_id) for entity_id in (row.get("target_entities") or []))
+    return image_key, entity_ids
+
+
+def relation_ordered_labels(task_id: str) -> List[str]:
+    if task_id == "relative_direction_mc":
+        return ["back-right", "opposite", "back-left", "left", "right"]
+    return ["back-right", "behind", "back-left", "left", "right"]
+
+
+def relation_public_weights(task_id: str) -> Dict[str, float]:
+    if task_id == "relative_direction_mc":
+        return RELATIVE_DIRECTION_PUBLIC_WEIGHTS
+    return OBJECT_REORIENTATION_PUBLIC_WEIGHTS
+
+
+def select_relation_task_rows(
+    relation_rows_by_task: Dict[str, List[Dict[str, Any]]],
+    *,
+    target_per_task: int,
+    max_per_scene_per_task: int,
+    seed: int,
+) -> List[Dict[str, Any]]:
+    def scene_cap_reached(counter: Counter[str], scene_id: str) -> bool:
+        return max_per_scene_per_task > 0 and counter[scene_id] >= max_per_scene_per_task
+
+    task_ids = sorted(
+        relation_rows_by_task,
+        key=lambda task_id: (
+            len({relation_pair_signature(row) for row in relation_rows_by_task[task_id]}),
+            task_id,
+        ),
+    )
+    quota_by_task = {
+        task_id: weighted_target_counts(target_per_task, relation_public_weights(task_id))
+        for task_id in task_ids
+    }
+    label_rows_by_task: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+    all_rows_by_task: Dict[str, List[Dict[str, Any]]] = {}
+    for task_id in task_ids:
+        rows = list(relation_rows_by_task[task_id])
+        rows.sort(key=lambda row: relation_selection_sort_key(row, seed))
+        all_rows_by_task[task_id] = rows
+        grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            grouped[str(row.get("answer_text", ""))].append(row)
+        label_rows_by_task[task_id] = grouped
+
+    label_indices: Dict[str, Dict[str, int]] = {
+        task_id: {label: 0 for label in relation_ordered_labels(task_id)}
+        for task_id in task_ids
+    }
+    all_indices: Dict[str, int] = {task_id: 0 for task_id in task_ids}
+    per_scene_counters: Dict[str, Counter[str]] = {task_id: Counter() for task_id in task_ids}
+    kept_by_task: Counter[str] = Counter()
+    kept_by_label: Dict[str, Counter[str]] = {task_id: Counter() for task_id in task_ids}
+    used_signatures: set[Tuple[str, Tuple[str, ...]]] = set()
+    selected: List[Dict[str, Any]] = []
+
+    def try_next_row(task_id: str, *, label: Optional[str]) -> Optional[Dict[str, Any]]:
+        if label is None:
+            rows = all_rows_by_task[task_id]
+            index = all_indices[task_id]
+            while index < len(rows):
+                row = rows[index]
+                index += 1
+                signature = relation_pair_signature(row)
+                scene_id = str(row["scene_id"])
+                if signature in used_signatures:
+                    continue
+                if scene_cap_reached(per_scene_counters[task_id], scene_id):
+                    continue
+                all_indices[task_id] = index
+                return row
+            all_indices[task_id] = index
+            return None
+
+        rows = label_rows_by_task[task_id].get(label, [])
+        index = label_indices[task_id][label]
+        while index < len(rows):
+            row = rows[index]
+            index += 1
+            signature = relation_pair_signature(row)
+            scene_id = str(row["scene_id"])
+            if signature in used_signatures:
+                continue
+            if scene_cap_reached(per_scene_counters[task_id], scene_id):
+                continue
+            label_indices[task_id][label] = index
+            return row
+        label_indices[task_id][label] = index
+        return None
+
+    def commit_row(task_id: str, row: Dict[str, Any]) -> None:
+        used_signatures.add(relation_pair_signature(row))
+        per_scene_counters[task_id][str(row["scene_id"])] += 1
+        kept_by_task[task_id] += 1
+        kept_by_label[task_id][str(row.get("answer_text", ""))] += 1
+        selected.append(row)
+
+    progress = True
+    while progress:
+        progress = False
+        for task_id in task_ids:
+            if kept_by_task[task_id] >= target_per_task:
+                continue
+            for label in relation_ordered_labels(task_id):
+                if kept_by_label[task_id][label] >= quota_by_task[task_id].get(label, 0):
+                    continue
+                row = try_next_row(task_id, label=label)
+                if row is None:
+                    continue
+                commit_row(task_id, row)
+                progress = True
+                break
+
+    progress = True
+    while progress:
+        progress = False
+        for task_id in task_ids:
+            if kept_by_task[task_id] >= target_per_task:
+                continue
+            row = try_next_row(task_id, label=None)
+            if row is None:
+                continue
+            commit_row(task_id, row)
+            progress = True
+
+    return selected
+
+
 def wrap_yaw_gap_deg(entity_a: Entity, entity_b: Entity) -> float:
     return abs(wrapped_delta_deg(yaw_deg_360(entity_b) - yaw_deg_360(entity_a)))
 
@@ -2850,7 +2983,23 @@ def select_split_pool(candidates: Sequence[Dict[str, Any]], target_per_task: int
         by_task[row["task_id"]].append(row)
 
     selected: List[Dict[str, Any]] = []
+    relation_task_ids = {
+        task_id
+        for task_id in ("relative_direction_mc", "object_conditioned_reorientation_mc")
+        if task_id in by_task
+    }
+    if relation_task_ids:
+        selected.extend(
+            select_relation_task_rows(
+                {task_id: by_task[task_id] for task_id in relation_task_ids},
+                target_per_task=target_per_task,
+                max_per_scene_per_task=max_per_scene_per_task,
+                seed=seed,
+            )
+        )
     for task_id, rows in sorted(by_task.items()):
+        if task_id in relation_task_ids:
+            continue
         rows = list(rows)
         if task_id == "seam_continuity_mc":
             rows.sort(key=lambda row: stable_hash(f"{seed}:{row['item_id']}"))
@@ -2882,45 +3031,6 @@ def select_split_pool(candidates: Sequence[Dict[str, Any]], target_per_task: int
                     kept += 1
                     kept_by_sector[sector] += 1
             if kept < target_per_task:
-                for row in rows:
-                    if kept >= target_per_task:
-                        break
-                    if row in selected:
-                        continue
-                    if scene_cap_reached(per_scene_counter, str(row["scene_id"])):
-                        continue
-                    selected.append(row)
-                    per_scene_counter[row["scene_id"]] += 1
-                    kept += 1
-            continue
-        if task_id in {"relative_direction_mc", "object_conditioned_reorientation_mc"}:
-            quota_by_label = weighted_target_counts(
-                target_per_task,
-                RELATIVE_DIRECTION_PUBLIC_WEIGHTS if task_id == "relative_direction_mc" else OBJECT_REORIENTATION_PUBLIC_WEIGHTS,
-            )
-            rows_by_label: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-            for row in rows:
-                answer_text = str(row.get("answer_text", ""))
-                rows_by_label[answer_text].append(row)
-            for label_rows in rows_by_label.values():
-                label_rows.sort(key=lambda row: relation_selection_sort_key(row, seed))
-
-            per_scene_counter = Counter()
-            kept = 0
-            kept_by_label: Counter[str] = Counter()
-            ordered_labels = ["back-right", "opposite" if task_id == "relative_direction_mc" else "behind", "back-left", "left", "right"]
-            for label in ordered_labels:
-                for row in rows_by_label.get(label, []):
-                    if kept >= target_per_task or kept_by_label[label] >= quota_by_label.get(label, 0):
-                        break
-                    if scene_cap_reached(per_scene_counter, str(row["scene_id"])):
-                        continue
-                    selected.append(row)
-                    per_scene_counter[row["scene_id"]] += 1
-                    kept += 1
-                    kept_by_label[label] += 1
-            if kept < target_per_task:
-                rows.sort(key=lambda row: relation_selection_sort_key(row, seed))
                 for row in rows:
                     if kept >= target_per_task:
                         break
