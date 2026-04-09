@@ -348,6 +348,11 @@ These rules apply broadly across the benchmark before task-specific logic runs.
 - Final public selection intentionally favors harder relations:
   - about `80%` combined across `back-right`, `opposite`, and `back-left`
   - about `20%` combined across the simpler `left` and `right` cases
+- `left` and `right` are now treated as a strict cap during final selection,
+  not as fallback labels.
+- If the hard relation pool is too small, the builder first backfills extra
+  natural hard-relation rows for this task and then tries yaw-rotated
+  seam-boundary variants that preserve the same hard relation.
 - If both objects lie near opposite ERP boundaries, those cross-boundary pairs
   are prioritized during final selection.
 
@@ -373,6 +378,10 @@ These rules apply broadly across the benchmark before task-specific logic runs.
 - Final public selection follows the same hard-case preference:
   - about `80%` combined across `back-right`, `behind`, and `back-left`
   - about `20%` combined across `left` and `right`
+- `left` and `right` are treated as a strict cap here as well.
+- If hard reorientation cases are underfilled, the builder backfills extra
+  natural hard rows first and then tries seam-boundary yaw-rotated variants
+  that still satisfy the same hard relation.
 - Cross-boundary boundary-pair cases are also prioritized when available.
 
 #### `observer_distance_choice`
@@ -860,6 +869,8 @@ ability”. A single scene can contribute many benchmark items across many tasks
   - When `relative_direction_mc` and `object_conditioned_reorientation_mc` are enabled together, candidate generation now routes an overlapping pair to only one of them:
     - overlapping ordered entity pairs are split by a stable random assignment
   - For `relative_direction_mc` and `object_conditioned_reorientation_mc`, final public selection also prefers harder backward relations and seam-boundary pairs over easy front-centered left/right cases.
+  - In those two tasks, `left/right` are strictly capped during public selection and are no longer used as unlimited fallback labels.
+  - When the hard-label pool is underfilled, the builder automatically backfills more hard relation candidates, first from natural overlapping pairs and then from yaw-rotated boundary cases.
   - Those two relation tasks are also jointly selected so the released public set does not reuse the same ERP image and the same ordered entity pair in both tasks.
 
 - Answer-key balance

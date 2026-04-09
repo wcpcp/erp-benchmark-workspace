@@ -1722,6 +1722,43 @@ def derived_candidate_entities(
     return filtered[:max_entities]
 
 
+def build_relation_row_for_task(
+    task_id: str,
+    scene: SceneMetadata,
+    reference: Entity,
+    target: Entity,
+    quality: float,
+) -> Optional[Dict[str, Any]]:
+    if task_id == "relative_direction_mc":
+        return build_relative_direction_mc(scene, reference, target, 0, 0, quality)
+    if task_id == "object_conditioned_reorientation_mc":
+        return build_object_conditioned_reorientation_mc(scene, reference, target, 0, 0, quality)
+    return None
+
+
+def relation_hard_deficits(
+    rows: Sequence[Dict[str, Any]],
+    *,
+    target_public_per_task: int,
+    enabled_tasks: Optional[set[str]],
+) -> Dict[str, Dict[str, int]]:
+    deficits: Dict[str, Dict[str, int]] = {}
+    for task_id in ("relative_direction_mc", "object_conditioned_reorientation_mc"):
+        if not task_enabled(task_id, enabled_tasks):
+            continue
+        quota = weighted_target_counts(target_public_per_task, relation_public_weights(task_id))
+        counts = Counter(
+            str(row.get("answer_text", ""))
+            for row in rows
+            if str(row.get("task_id")) == task_id
+        )
+        deficits[task_id] = {
+            label: max(0, quota[label] - counts.get(label, 0))
+            for label in relation_hard_labels(task_id)
+        }
+    return deficits
+
+
 def augment_representation_stress_candidates(
     scenes: Sequence[SceneMetadata],
     all_candidates: List[Dict[str, Any]],
@@ -1754,6 +1791,15 @@ def augment_representation_stress_candidates(
             domain=info.domain,
             split_lock=info.split_lock,
         )
+        return True
+
+    def add_natural_row(row: Optional[Dict[str, Any]], reason: str) -> bool:
+        if not row or row["item_id"] in existing_ids:
+            return False
+        row.setdefault("metadata", {})
+        row["metadata"]["relation_hard_supplement"] = reason
+        derived_rows.append(row)
+        existing_ids.add(row["item_id"])
         return True
 
     absolute_targets = absolute_direction_target_counts(max(DERIVED_MIN_ABSOLUTE_DIRECTION_CANDIDATES, target_public_per_task))
@@ -1896,6 +1942,118 @@ def augment_representation_stress_candidates(
                 if produced_any:
                     used_target_ids.add(target.entity_id)
                     produced_for_scene += 1
+
+    relation_task_ids = [
+        task_id
+        for task_id in ("relative_direction_mc", "object_conditioned_reorientation_mc")
+        if task_enabled(task_id, enabled_tasks)
+    ]
+    relation_deficits = relation_hard_deficits(
+        [*all_candidates, *derived_rows],
+        target_public_per_task=target_public_per_task,
+        enabled_tasks=enabled_tasks,
+    )
+    if any(any(value > 0 for value in deficits.values()) for deficits in relation_deficits.values()):
+        supplement_rows_by_key: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+        for scene in scenes:
+            if all(not any(value > 0 for value in relation_deficits.get(task_id, {}).values()) for task_id in relation_task_ids):
+                break
+            label_counts = Counter(entity.label for entity in scene.entities)
+            anchors = [
+                item
+                for item in select_anchor_entities(scene, max_anchors=0)
+                if anchor_pool_entity_eligible(item["entity"])
+            ]
+            for anchor_payload in anchors:
+                anchor = anchor_payload["entity"]
+                quality = float(score_entity(anchor, label_counts, scene))
+                for partner_payload in choose_relation_partners(anchor, scene, max_partners=0):
+                    partner = partner_payload["entity"]
+                    for task_id in relation_task_ids:
+                        if not any(value > 0 for value in relation_deficits.get(task_id, {}).values()):
+                            continue
+                        row = build_relation_row_for_task(task_id, scene, anchor, partner, quality)
+                        if row is None:
+                            continue
+                        label = str(row.get("answer_text", ""))
+                        if label not in relation_hard_labels(task_id):
+                            continue
+                        if row["item_id"] in existing_ids:
+                            continue
+                        supplement_rows_by_key[(task_id, label)].append(row)
+
+        for (task_id, label), rows in supplement_rows_by_key.items():
+            rows.sort(key=lambda row: relation_selection_sort_key(row, seed))
+            needed = relation_deficits.get(task_id, {}).get(label, 0)
+            added = 0
+            for row in rows:
+                if added >= needed:
+                    break
+                if add_natural_row(row, "natural_hard_relation_backfill"):
+                    added += 1
+
+    relation_deficits = relation_hard_deficits(
+        [*all_candidates, *derived_rows],
+        target_public_per_task=target_public_per_task,
+        enabled_tasks=enabled_tasks,
+    )
+    if any(any(value > 0 for value in deficits.values()) for deficits in relation_deficits.values()):
+        produced_by_task_label: Counter[Tuple[str, str]] = Counter()
+        for scene in scenes:
+            if all(not any(value > 0 for value in relation_deficits.get(task_id, {}).values()) for task_id in relation_task_ids):
+                break
+            produced_for_scene = 0
+            info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
+            label_counts = Counter(entity.label for entity in scene.entities)
+            anchors = [
+                item
+                for item in select_anchor_entities(scene, max_anchors=0)
+                if anchor_pool_entity_eligible(item["entity"])
+            ]
+            for anchor_payload in anchors:
+                if produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
+                    break
+                anchor = anchor_payload["entity"]
+                quality = float(score_entity(anchor, label_counts, scene))
+                for partner_payload in choose_relation_partners(anchor, scene, max_partners=0):
+                    if produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
+                        break
+                    partner = partner_payload["entity"]
+                    shift = choose_yaw_shift_for_boundary_pair(anchor, partner)
+                    for task_id in relation_task_ids:
+                        deficits = relation_deficits.get(task_id, {})
+                        if not any(value > 0 for value in deficits.values()):
+                            continue
+                        suffix = f"{task_id}_boundary_yaw_{int(round(shift))}_{anchor.entity_id}_{partner.entity_id}"
+                        derived_scene = build_rotated_scene(scene, yaw_shift_deg=shift, suffix=suffix, output_dir=output_dir)
+                        if derived_scene is None:
+                            continue
+                        derived_reference = find_entity(derived_scene, anchor.entity_id)
+                        derived_target = find_entity(derived_scene, partner.entity_id)
+                        if derived_reference is None or derived_target is None:
+                            continue
+                        row = build_relation_row_for_task(
+                            task_id,
+                            derived_scene,
+                            derived_reference,
+                            derived_target,
+                            quality,
+                        )
+                        if row is None:
+                            continue
+                        label = str(row.get("answer_text", ""))
+                        if label not in relation_hard_labels(task_id):
+                            continue
+                        if deficits.get(label, 0) <= produced_by_task_label[(task_id, label)]:
+                            continue
+                        metadata = row.get("metadata") or {}
+                        if not bool(metadata.get("boundary_pair")):
+                            continue
+                        row.setdefault("metadata", {})
+                        row["metadata"]["relation_hard_supplement"] = "derived_boundary_hard_backfill"
+                        if add_row(row, derived_scene, info):
+                            produced_by_task_label[(task_id, label)] += 1
+                            produced_for_scene += 1
 
     return derived_rows
 
@@ -2053,6 +2211,30 @@ def relation_public_weights(task_id: str) -> Dict[str, float]:
     return OBJECT_REORIENTATION_PUBLIC_WEIGHTS
 
 
+def relation_easy_labels(task_id: str) -> set[str]:
+    del task_id
+    return {"left", "right"}
+
+
+def relation_hard_labels(task_id: str) -> List[str]:
+    return [label for label in relation_ordered_labels(task_id) if label not in relation_easy_labels(task_id)]
+
+
+def pair_midpoint_yaw_deg(reference: Entity, target: Entity) -> float:
+    ref_rad = math.radians(yaw_deg_360(reference))
+    target_rad = math.radians(yaw_deg_360(target))
+    x = math.cos(ref_rad) + math.cos(target_rad)
+    y = math.sin(ref_rad) + math.sin(target_rad)
+    if abs(x) < 1e-6 and abs(y) < 1e-6:
+        return yaw_deg_360(reference)
+    return yaw360_to_signed(math.degrees(math.atan2(y, x)))
+
+
+def choose_yaw_shift_for_boundary_pair(reference: Entity, target: Entity) -> float:
+    midpoint = pair_midpoint_yaw_deg(reference, target)
+    return wrapped_delta_deg(midpoint - 180.0)
+
+
 def select_relation_task_rows(
     relation_rows_by_task: Dict[str, List[Dict[str, Any]]],
     *,
@@ -2159,11 +2341,13 @@ def select_relation_task_rows(
         for task_id in task_ids:
             if kept_by_task[task_id] >= target_per_task:
                 continue
-            row = try_next_row(task_id, label=None)
-            if row is None:
-                continue
-            commit_row(task_id, row)
-            progress = True
+            for label in relation_hard_labels(task_id):
+                row = try_next_row(task_id, label=label)
+                if row is None:
+                    continue
+                commit_row(task_id, row)
+                progress = True
+                break
 
     return selected
 
