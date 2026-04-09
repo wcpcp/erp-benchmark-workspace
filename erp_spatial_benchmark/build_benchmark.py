@@ -578,12 +578,37 @@ def generate_scene_candidates(scene: SceneMetadata, enabled_tasks: Optional[set[
         for partner_index, partner_payload in enumerate(partners):
             partner = partner_payload["entity"]
             relation_rows: List[Optional[Dict[str, Any]]] = []
-            if task_enabled("relative_direction_mc", enabled_tasks):
-                relation_rows.append(build_relative_direction_mc(scene, anchor, partner, anchor_index, partner_index, quality))
+            relative_direction_enabled = task_enabled("relative_direction_mc", enabled_tasks)
+            object_reorientation_enabled = task_enabled("object_conditioned_reorientation_mc", enabled_tasks)
+            relative_direction_row = (
+                build_relative_direction_mc(scene, anchor, partner, anchor_index, partner_index, quality)
+                if relative_direction_enabled
+                else None
+            )
             if task_enabled("camera_rotation_transform_mc", enabled_tasks):
                 relation_rows.append(build_camera_rotation_transform_mc(scene, anchor, anchor_index, partner_index, quality))
-            if task_enabled("object_conditioned_reorientation_mc", enabled_tasks):
-                relation_rows.append(build_object_conditioned_reorientation_mc(scene, anchor, partner, anchor_index, partner_index, quality))
+            object_reorientation_row = (
+                build_object_conditioned_reorientation_mc(scene, anchor, partner, anchor_index, partner_index, quality)
+                if object_reorientation_enabled
+                else None
+            )
+            if relative_direction_enabled and object_reorientation_enabled:
+                if relative_direction_row and object_reorientation_row:
+                    preferred_task, routing_reason = preferred_relation_task_for_pair(scene, anchor, partner)
+                    chosen_row = relative_direction_row if preferred_task == "relative_direction_mc" else object_reorientation_row
+                    chosen_row.setdefault("metadata", {})
+                    chosen_row["metadata"]["pair_task_routing_reason"] = routing_reason
+                    relation_rows.append(chosen_row)
+                else:
+                    if relative_direction_row:
+                        relation_rows.append(relative_direction_row)
+                    if object_reorientation_row:
+                        relation_rows.append(object_reorientation_row)
+            else:
+                if relative_direction_row:
+                    relation_rows.append(relative_direction_row)
+                if object_reorientation_row:
+                    relation_rows.append(object_reorientation_row)
             if task_enabled("relative_3d_position_mc", enabled_tasks):
                 relation_rows.append(build_relative_3d_position_mc(scene, anchor, partner, anchor_index, partner_index, quality))
             for row in relation_rows:
@@ -2007,6 +2032,13 @@ def relation_pair_signature(row: Dict[str, Any]) -> Tuple[str, Tuple[str, ...]]:
     image_key = str(row.get("image_path") or row.get("scene_id") or "")
     entity_ids = tuple(str(entity_id) for entity_id in (row.get("target_entities") or []))
     return image_key, entity_ids
+
+
+def preferred_relation_task_for_pair(scene: SceneMetadata, reference: Entity, target: Entity) -> Tuple[str, str]:
+    key = f"{scene.scene_id}:{reference.entity_id}:{target.entity_id}:relation_task_random"
+    if stable_hash(key) % 2 == 0:
+        return "relative_direction_mc", "stable_random_split"
+    return "object_conditioned_reorientation_mc", "stable_random_split"
 
 
 def relation_ordered_labels(task_id: str) -> List[str]:

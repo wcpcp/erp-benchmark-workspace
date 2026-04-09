@@ -339,6 +339,9 @@ These rules apply broadly across the benchmark before task-specific logic runs.
 - `abs(delta_yaw)` must be large enough to define a clear relation.
 - Effective margin to relation boundaries must be at least `15°` after BFOV
   clearance using the larger target/reference horizontal extent.
+- When `relative_direction_mc` and `object_conditioned_reorientation_mc` are
+  built together and the same ordered entity pair is valid for both, candidate
+  generation keeps only one of the two tasks using a stable random split.
 - During final public selection, this task is jointly selected with
   `object_conditioned_reorientation_mc`, and the two tasks are not allowed to
   share the same ERP image plus the same ordered entity pair.
@@ -361,6 +364,9 @@ These rules apply broadly across the benchmark before task-specific logic runs.
   size filter.
 - The reoriented relation must remain stable after BFOV-aware clearance.
 - Effective margin must be at least `15°`.
+- When this task is built together with `relative_direction_mc`, the same
+  ordered entity pair is assigned here only if it wins the stable random split
+  against `relative_direction_mc`.
 - During final public selection, this task is jointly selected with
   `relative_direction_mc`, and the two tasks are not allowed to share the same
   ERP image plus the same ordered entity pair.
@@ -851,6 +857,8 @@ ability”. A single scene can contribute many benchmark items across many tasks
     - `relative_direction_mc`
     - `object_conditioned_reorientation_mc`
     - `relative_3d_position_mc`
+  - When `relative_direction_mc` and `object_conditioned_reorientation_mc` are enabled together, candidate generation now routes an overlapping pair to only one of them:
+    - overlapping ordered entity pairs are split by a stable random assignment
   - For `relative_direction_mc` and `object_conditioned_reorientation_mc`, final public selection also prefers harder backward relations and seam-boundary pairs over easy front-centered left/right cases.
   - Those two relation tasks are also jointly selected so the released public set does not reuse the same ERP image and the same ordered entity pair in both tasks.
 
