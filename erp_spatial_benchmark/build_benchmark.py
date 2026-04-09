@@ -1759,6 +1759,14 @@ def relation_hard_deficits(
     return deficits
 
 
+def relation_supplement_entities(scene: SceneMetadata, *, max_entities: int = 12) -> List[Entity]:
+    return derived_candidate_entities(
+        scene,
+        predicate=direction_task_entity_eligible,
+        max_entities=max_entities,
+    )
+
+
 def augment_representation_stress_candidates(
     scenes: Sequence[SceneMetadata],
     all_candidates: List[Dict[str, Any]],
@@ -1948,29 +1956,29 @@ def augment_representation_stress_candidates(
         for task_id in ("relative_direction_mc", "object_conditioned_reorientation_mc")
         if task_enabled(task_id, enabled_tasks)
     ]
-    relation_deficits = relation_hard_deficits(
+    relation_remaining = relation_hard_deficits(
         [*all_candidates, *derived_rows],
         target_public_per_task=target_public_per_task,
         enabled_tasks=enabled_tasks,
     )
-    if any(any(value > 0 for value in deficits.values()) for deficits in relation_deficits.values()):
-        supplement_rows_by_key: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+    if any(any(value > 0 for value in deficits.values()) for deficits in relation_remaining.values()):
         for scene in scenes:
-            if all(not any(value > 0 for value in relation_deficits.get(task_id, {}).values()) for task_id in relation_task_ids):
+            if all(not any(value > 0 for value in relation_remaining.get(task_id, {}).values()) for task_id in relation_task_ids):
                 break
             label_counts = Counter(entity.label for entity in scene.entities)
-            anchors = [
-                item
-                for item in select_anchor_entities(scene, max_anchors=0)
-                if anchor_pool_entity_eligible(item["entity"])
-            ]
-            for anchor_payload in anchors:
-                anchor = anchor_payload["entity"]
+            supplement_entities = relation_supplement_entities(scene)
+            if len(supplement_entities) < 2:
+                continue
+            produced_for_scene = 0
+            for anchor in supplement_entities:
+                if produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
+                    break
                 quality = float(score_entity(anchor, label_counts, scene))
-                for partner_payload in choose_relation_partners(anchor, scene, max_partners=0):
-                    partner = partner_payload["entity"]
+                for partner in supplement_entities:
+                    if partner.entity_id == anchor.entity_id or produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
+                        continue
                     for task_id in relation_task_ids:
-                        if not any(value > 0 for value in relation_deficits.get(task_id, {}).values()):
+                        if not any(value > 0 for value in relation_remaining.get(task_id, {}).values()):
                             continue
                         row = build_relation_row_for_task(task_id, scene, anchor, partner, quality)
                         if row is None:
@@ -1978,50 +1986,34 @@ def augment_representation_stress_candidates(
                         label = str(row.get("answer_text", ""))
                         if label not in relation_hard_labels(task_id):
                             continue
-                        if row["item_id"] in existing_ids:
+                        if relation_remaining[task_id].get(label, 0) <= 0:
                             continue
-                        supplement_rows_by_key[(task_id, label)].append(row)
+                        if add_natural_row(row, "natural_hard_relation_backfill"):
+                            relation_remaining[task_id][label] -= 1
+                            produced_for_scene += 1
+                            if produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
+                                break
 
-        for (task_id, label), rows in supplement_rows_by_key.items():
-            rows.sort(key=lambda row: relation_selection_sort_key(row, seed))
-            needed = relation_deficits.get(task_id, {}).get(label, 0)
-            added = 0
-            for row in rows:
-                if added >= needed:
-                    break
-                if add_natural_row(row, "natural_hard_relation_backfill"):
-                    added += 1
-
-    relation_deficits = relation_hard_deficits(
-        [*all_candidates, *derived_rows],
-        target_public_per_task=target_public_per_task,
-        enabled_tasks=enabled_tasks,
-    )
-    if any(any(value > 0 for value in deficits.values()) for deficits in relation_deficits.values()):
-        produced_by_task_label: Counter[Tuple[str, str]] = Counter()
+    if any(any(value > 0 for value in deficits.values()) for deficits in relation_remaining.values()):
         for scene in scenes:
-            if all(not any(value > 0 for value in relation_deficits.get(task_id, {}).values()) for task_id in relation_task_ids):
+            if all(not any(value > 0 for value in relation_remaining.get(task_id, {}).values()) for task_id in relation_task_ids):
                 break
             produced_for_scene = 0
             info = scene_infos.get(scene.scene_id) or build_scene_side_info(scene, {})
             label_counts = Counter(entity.label for entity in scene.entities)
-            anchors = [
-                item
-                for item in select_anchor_entities(scene, max_anchors=0)
-                if anchor_pool_entity_eligible(item["entity"])
-            ]
-            for anchor_payload in anchors:
+            supplement_entities = relation_supplement_entities(scene)
+            if len(supplement_entities) < 2:
+                continue
+            for anchor in supplement_entities:
                 if produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
                     break
-                anchor = anchor_payload["entity"]
                 quality = float(score_entity(anchor, label_counts, scene))
-                for partner_payload in choose_relation_partners(anchor, scene, max_partners=0):
-                    if produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
-                        break
-                    partner = partner_payload["entity"]
+                for partner in supplement_entities:
+                    if partner.entity_id == anchor.entity_id or produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
+                        continue
                     shift = choose_yaw_shift_for_boundary_pair(anchor, partner)
                     for task_id in relation_task_ids:
-                        deficits = relation_deficits.get(task_id, {})
+                        deficits = relation_remaining.get(task_id, {})
                         if not any(value > 0 for value in deficits.values()):
                             continue
                         suffix = f"{task_id}_boundary_yaw_{int(round(shift))}_{anchor.entity_id}_{partner.entity_id}"
@@ -2044,7 +2036,7 @@ def augment_representation_stress_candidates(
                         label = str(row.get("answer_text", ""))
                         if label not in relation_hard_labels(task_id):
                             continue
-                        if deficits.get(label, 0) <= produced_by_task_label[(task_id, label)]:
+                        if deficits.get(label, 0) <= 0:
                             continue
                         metadata = row.get("metadata") or {}
                         if not bool(metadata.get("boundary_pair")):
@@ -2052,8 +2044,10 @@ def augment_representation_stress_candidates(
                         row.setdefault("metadata", {})
                         row["metadata"]["relation_hard_supplement"] = "derived_boundary_hard_backfill"
                         if add_row(row, derived_scene, info):
-                            produced_by_task_label[(task_id, label)] += 1
+                            relation_remaining[task_id][label] -= 1
                             produced_for_scene += 1
+                            if produced_for_scene >= DERIVED_MAX_PER_SCENE_PER_TASK:
+                                break
 
     return derived_rows
 
