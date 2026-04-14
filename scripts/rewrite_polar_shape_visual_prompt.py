@@ -11,7 +11,7 @@ import shutil
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -92,8 +92,8 @@ def load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def discover_scene_metadata_paths(roots: Sequence[Path]) -> Dict[str, Path]:
-    scene_index: Dict[str, Path] = {}
+def discover_scene_metadata_paths(roots: Sequence[Path]) -> Dict[str, List[Path]]:
+    scene_index: Dict[str, List[Path]] = {}
     for root in roots:
         if root.is_file():
             candidates = [root]
@@ -113,8 +113,10 @@ def discover_scene_metadata_paths(roots: Sequence[Path]) -> Dict[str, Path]:
                     scene_id = str(data.get("scene_id", "") or data.get("image_id", "")).strip()
                 else:
                     scene_id = path.stem
-                if scene_id and scene_id not in scene_index:
-                    scene_index[scene_id] = path
+                if scene_id:
+                    scene_index.setdefault(scene_id, [])
+                    if path not in scene_index[scene_id]:
+                        scene_index[scene_id].append(path)
             except Exception:
                 continue
     return scene_index
@@ -124,7 +126,13 @@ def load_scene_from_path(path: Path) -> SceneMetadata:
     return SceneMetadata.from_dict(load_json(path))
 
 
-def resolve_scene_metadata_path(item: Dict[str, Any], scene_index: Dict[str, Path]) -> Optional[Path]:
+def scene_candidate_paths(scene_index: Dict[str, List[Path]], key: str) -> List[Path]:
+    if not key:
+        return []
+    return list(scene_index.get(key, []))
+
+
+def resolve_scene_metadata_path(item: Dict[str, Any], scene_index: Dict[str, List[Path]]) -> Optional[Path]:
     metadata = item.get("metadata") or {}
     derived_metadata_path = metadata.get("derived_metadata_path")
     if derived_metadata_path:
@@ -140,8 +148,9 @@ def resolve_scene_metadata_path(item: Dict[str, Any], scene_index: Dict[str, Pat
         str((metadata.get("derived_rotation") or {}).get("derived_scene_id", "")).strip(),
         str((metadata.get("derived_rotation") or {}).get("source_scene_id", "")).strip(),
     ]:
-        if key and key in scene_index:
-            return scene_index[key]
+        candidates = scene_candidate_paths(scene_index, key)
+        if candidates:
+            return candidates[0]
     return None
 
 
@@ -193,6 +202,39 @@ def parse_rotation_from_name(text: str) -> Optional[Tuple[float, float]]:
     return None
 
 
+def expected_x_center_from_scene_name(scene_name: str) -> Optional[float]:
+    sector_map = {
+        "front": 0.50,
+        "front-right": 0.625,
+        "right": 0.75,
+        "back-right": 0.875,
+        "back": 0.00,
+        "back-left": 0.125,
+        "left": 0.25,
+        "front-left": 0.375,
+    }
+    match = re.search(r"__absolute_(?P<sector>front-right|front-left|back-right|back-left|front|right|back|left)_yaw_", scene_name)
+    if match is None:
+        if "__seam_yaw_" in scene_name:
+            return 0.0
+        return None
+    return sector_map.get(match.group("sector"))
+
+
+def wrap_distance(a: float, b: float) -> float:
+    return min(abs(a - b), 1.0 - abs(a - b))
+
+
+def box_center_x_norm(box: Sequence[float], width: float) -> float:
+    x1, _, x2, _ = [float(v) for v in box]
+    if x1 <= x2:
+        center = (x1 + x2) / 2.0
+    else:
+        span = ((x2 + width) - x1) / 2.0
+        center = (x1 + span) % width
+    return center / width if width > 0 else 0.0
+
+
 def rebuild_rotated_image(src_image: Path, dst_image: Path, *, yaw_shift_deg: float, pitch_shift_deg: float) -> None:
     if abs(yaw_shift_deg) > 1e-6 and abs(pitch_shift_deg) > 1e-6:
         tmp_dir = dst_image.parent / "_tmp"
@@ -213,17 +255,17 @@ def rebuild_rotated_image(src_image: Path, dst_image: Path, *, yaw_shift_deg: fl
 def rebuild_missing_derived_image(
     expected_path: Path,
     item: Dict[str, Any],
-    scene_index: Dict[str, Path],
+    scene_index: Dict[str, List[Path]],
     image_index: Dict[str, Path],
 ) -> Tuple[Optional[Path], Optional[str]]:
     metadata = item.get("metadata") or {}
     source_scene_id = str((metadata.get("derived_rotation") or {}).get("source_scene_id", "")).strip()
     if not source_scene_id:
         return None, "no_source_scene_id"
-    source_scene_path = scene_index.get(source_scene_id)
-    if source_scene_path is None:
+    source_candidates = scene_candidate_paths(scene_index, source_scene_id)
+    if not source_candidates:
         return None, "source_scene_metadata_not_found"
-    source_scene = load_scene_from_path(source_scene_path)
+    source_scene = load_scene_from_path(source_candidates[0])
     source_image = Path(str(source_scene.erp_image_path))
     if not source_image.exists():
         restored = restore_missing_image(source_image, image_index)
@@ -289,12 +331,54 @@ def transformed_bbox_visual(entity_box: Sequence[float], scene: SceneMetadata, *
     return [start, y_min, end, y_max]
 
 
+def choose_best_source_scene(
+    item: Dict[str, Any],
+    target_id: str,
+    scene_index: Dict[str, List[Path]],
+) -> Optional[SceneMetadata]:
+    metadata = item.get("metadata") or {}
+    source_scene_id = str((metadata.get("derived_rotation") or {}).get("source_scene_id", "")).strip()
+    if not source_scene_id:
+        return None
+    candidates = scene_candidate_paths(scene_index, source_scene_id)
+    if not candidates:
+        return None
+
+    rotation = parse_rotation_from_name(str(item.get("scene_id", ""))) or parse_rotation_from_name(str(Path(str(item.get("image_path", ""))).stem))
+    expected_x = expected_x_center_from_scene_name(str(item.get("scene_id", "")))
+    scored: List[Tuple[float, int, SceneMetadata]] = []
+    for idx, path in enumerate(candidates):
+        scene = load_scene_from_path(path)
+        target = find_entity(scene, target_id)
+        if target is None or len(target.bbox_erp) != 4:
+            continue
+        score = 1000.0
+        if rotation is not None:
+            visual_box = transformed_bbox_visual(
+                target.bbox_erp,
+                scene,
+                yaw_shift_deg=rotation[0],
+                pitch_shift_deg=rotation[1],
+            )
+            if visual_box is not None and expected_x is not None and scene.erp_width:
+                center_x = box_center_x_norm(visual_box, float(scene.erp_width))
+                score = wrap_distance(center_x, expected_x)
+            elif visual_box is not None:
+                score = 0.5
+        scored.append((score, idx, scene))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda item: (item[0], item[1]))
+    return scored[0][2]
+
+
 def resolve_target_box(
     item: Dict[str, Any],
     scene: SceneMetadata,
     scene_path: Path,
     target_id: str,
-    scene_index: Dict[str, Path],
+    scene_index: Dict[str, List[Path]],
 ) -> Tuple[Optional[Sequence[float]], str]:
     target = find_entity(scene, target_id)
     if target is None:
@@ -311,9 +395,8 @@ def resolve_target_box(
     # If this item is derived and we know its source scene, prefer recomputing a
     # wrap-preserving box from the source scene even when derived metadata exists.
     if source_scene_id and rotation is not None:
-        source_scene_path = scene_index.get(source_scene_id)
-        if source_scene_path is not None:
-            source_scene = load_scene_from_path(source_scene_path)
+        source_scene = choose_best_source_scene(item, target_id, scene_index)
+        if source_scene is not None:
             source_target = find_entity(source_scene, target_id)
             if source_target is not None and len(source_target.bbox_erp) == 4:
                 yaw_shift_deg, pitch_shift_deg = rotation
