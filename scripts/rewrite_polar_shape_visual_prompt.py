@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
 
@@ -278,7 +279,7 @@ def main() -> int:
     image_index = discover_image_paths(image_search_roots)
     image_search_root_status = summarize_search_roots(image_search_roots)
     output_rows = []
-    report = {"rewritten": 0, "skipped": 0}
+    report: Counter[str] = Counter()
     failures = []
 
     for row in iter_jsonl(input_path):
@@ -375,7 +376,7 @@ def main() -> int:
                 "image_index_size": len(image_index),
                 "image_search_roots": [str(path) for path in image_search_roots],
                 "image_search_root_status": image_search_root_status,
-                "counts": report,
+                "counts": dict(sorted(report.items())),
                 "failure_examples": failures[:50],
             },
             ensure_ascii=False,
@@ -388,7 +389,7 @@ def main() -> int:
             {
                 "output_jsonl": str(output_jsonl),
                 "report_path": str(report_path),
-                "counts": report,
+                "counts": dict(sorted(report.items())),
             },
             ensure_ascii=False,
             indent=2,
