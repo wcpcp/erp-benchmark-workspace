@@ -259,6 +259,36 @@ def shifted_bbox_yaw_only(entity_box: Sequence[float], scene: SceneMetadata, *, 
     return [new_x1, y1, new_x2, y2]
 
 
+def bfov_box_from_rotated_entity(
+    scene: SceneMetadata,
+    entity,
+    *,
+    yaw_shift_deg: float = 0.0,
+    pitch_shift_deg: float = 0.0,
+) -> Optional[Sequence[float]]:
+    bfov = entity.resolved_bfov
+    width = int(scene.erp_width or 0)
+    height = int(scene.erp_height or 0)
+    if bfov is None or width <= 0 or height <= 0:
+        return None
+    yaw_deg, pitch_deg, x_fov_deg, y_fov_deg = [float(v) for v in bfov]
+    yaw_new, pitch_new = rotate_yaw_pitch(
+        yaw_deg,
+        pitch_deg,
+        yaw_shift_deg=yaw_shift_deg,
+        pitch_shift_deg=pitch_shift_deg,
+    )
+    x_center = yaw_to_erp_x(yaw_new, width) % float(width)
+    y_center = min(float(height - 1), max(0.0, pitch_to_erp_y(pitch_new, height)))
+    half_w = (float(x_fov_deg) / 360.0) * float(width) / 2.0
+    half_h = (float(y_fov_deg) / 180.0) * float(height) / 2.0
+    x1 = (x_center - half_w) % float(width)
+    x2 = (x_center + half_w) % float(width)
+    y1 = max(0.0, y_center - half_h)
+    y2 = min(float(height - 1), y_center + half_h)
+    return [x1, y1, x2, y2]
+
+
 def rebuild_rotated_image(src_image: Path, dst_image: Path, *, yaw_shift_deg: float, pitch_shift_deg: float) -> None:
     if abs(yaw_shift_deg) > 1e-6 and abs(pitch_shift_deg) > 1e-6:
         tmp_dir = dst_image.parent / "_tmp"
@@ -384,6 +414,13 @@ def choose_best_source_scene(
                     scene,
                     yaw_shift_deg=rotation[0],
                 )
+            elif target.resolved_bfov is not None:
+                visual_box = bfov_box_from_rotated_entity(
+                    scene,
+                    target,
+                    yaw_shift_deg=rotation[0],
+                    pitch_shift_deg=rotation[1],
+                )
             else:
                 visual_box = transformed_bbox_visual(
                     target.bbox_erp,
@@ -438,6 +475,14 @@ def resolve_target_box(
                         yaw_shift_deg=yaw_shift_deg,
                     )
                     source_name = "bbox_shifted_from_source_scene_yaw_only"
+                elif source_target.resolved_bfov is not None:
+                    visual_box = bfov_box_from_rotated_entity(
+                        source_scene,
+                        source_target,
+                        yaw_shift_deg=yaw_shift_deg,
+                        pitch_shift_deg=pitch_shift_deg,
+                    )
+                    source_name = "bbox_recomputed_from_source_scene_bfov"
                 else:
                     visual_box = transformed_bbox_visual(
                         source_target.bbox_erp,
