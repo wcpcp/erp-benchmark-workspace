@@ -42,6 +42,11 @@ ROTATION_PATTERNS = [
     re.compile(r"__polar_pitch_(?P<pitch>-?\d+)_"),
     re.compile(r"__[^_].*?_yaw_(?P<yaw>-?\d+)_"),
 ]
+SOURCE_SCENE_PATTERNS = [
+    re.compile(r"^(?P<source>.+)__observer_distance_rot_y-?\d+_p-?\d+_E[^_]+$"),
+    re.compile(r"^(?P<source>.+)__polar_pitch_-?\d+_E[^_]+$"),
+    re.compile(r"^(?P<source>.+)__[^_].*?_yaw_-?\d+_E[^_]+$"),
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -202,6 +207,14 @@ def parse_rotation_from_name(text: str) -> Optional[Tuple[float, float]]:
     return None
 
 
+def parse_source_scene_id_from_name(scene_name: str) -> str:
+    for pattern in SOURCE_SCENE_PATTERNS:
+        match = pattern.match(scene_name)
+        if match is not None:
+            return str(match.group("source"))
+    return ""
+
+
 def expected_x_center_from_scene_name(scene_name: str) -> Optional[float]:
     sector_map = {
         "front": 0.50,
@@ -233,6 +246,17 @@ def box_center_x_norm(box: Sequence[float], width: float) -> float:
         span = ((x2 + width) - x1) / 2.0
         center = (x1 + span) % width
     return center / width if width > 0 else 0.0
+
+
+def shifted_bbox_yaw_only(entity_box: Sequence[float], scene: SceneMetadata, *, yaw_shift_deg: float) -> Optional[Sequence[float]]:
+    width = int(scene.erp_width or 0)
+    if width <= 0 or len(entity_box) != 4:
+        return None
+    x1, y1, x2, y2 = [float(v) for v in entity_box]
+    shift_px = (float(yaw_shift_deg) / 360.0) * float(width)
+    new_x1 = (x1 - shift_px) % float(width)
+    new_x2 = (x2 - shift_px) % float(width)
+    return [new_x1, y1, new_x2, y2]
 
 
 def rebuild_rotated_image(src_image: Path, dst_image: Path, *, yaw_shift_deg: float, pitch_shift_deg: float) -> None:
@@ -337,7 +361,7 @@ def choose_best_source_scene(
     scene_index: Dict[str, List[Path]],
 ) -> Optional[SceneMetadata]:
     metadata = item.get("metadata") or {}
-    source_scene_id = str((metadata.get("derived_rotation") or {}).get("source_scene_id", "")).strip()
+    source_scene_id = str((metadata.get("derived_rotation") or {}).get("source_scene_id", "")).strip() or parse_source_scene_id_from_name(str(item.get("scene_id", "")))
     if not source_scene_id:
         return None
     candidates = scene_candidate_paths(scene_index, source_scene_id)
@@ -354,12 +378,19 @@ def choose_best_source_scene(
             continue
         score = 1000.0
         if rotation is not None:
-            visual_box = transformed_bbox_visual(
-                target.bbox_erp,
-                scene,
-                yaw_shift_deg=rotation[0],
-                pitch_shift_deg=rotation[1],
-            )
+            if abs(rotation[1]) < 1e-6:
+                visual_box = shifted_bbox_yaw_only(
+                    target.bbox_erp,
+                    scene,
+                    yaw_shift_deg=rotation[0],
+                )
+            else:
+                visual_box = transformed_bbox_visual(
+                    target.bbox_erp,
+                    scene,
+                    yaw_shift_deg=rotation[0],
+                    pitch_shift_deg=rotation[1],
+                )
             if visual_box is not None and expected_x is not None and scene.erp_width:
                 center_x = box_center_x_norm(visual_box, float(scene.erp_width))
                 score = wrap_distance(center_x, expected_x)
@@ -387,7 +418,7 @@ def resolve_target_box(
     item_scene_id = str(item.get("scene_id", "")).strip()
     metadata = item.get("metadata") or {}
     derived_scene_id = str((metadata.get("derived_rotation") or {}).get("derived_scene_id", "")).strip()
-    source_scene_id = str((metadata.get("derived_rotation") or {}).get("source_scene_id", "")).strip()
+    source_scene_id = str((metadata.get("derived_rotation") or {}).get("source_scene_id", "")).strip() or parse_source_scene_id_from_name(item_scene_id)
     effective_derived_id = derived_scene_id or item_scene_id
 
     rotation = parse_rotation_from_name(item_scene_id) or parse_rotation_from_name(str(Path(str(item.get("image_path", ""))).stem))
@@ -400,14 +431,23 @@ def resolve_target_box(
             source_target = find_entity(source_scene, target_id)
             if source_target is not None and len(source_target.bbox_erp) == 4:
                 yaw_shift_deg, pitch_shift_deg = rotation
-                visual_box = transformed_bbox_visual(
-                    source_target.bbox_erp,
-                    source_scene,
-                    yaw_shift_deg=yaw_shift_deg,
-                    pitch_shift_deg=pitch_shift_deg,
-                )
+                if abs(pitch_shift_deg) < 1e-6:
+                    visual_box = shifted_bbox_yaw_only(
+                        source_target.bbox_erp,
+                        source_scene,
+                        yaw_shift_deg=yaw_shift_deg,
+                    )
+                    source_name = "bbox_shifted_from_source_scene_yaw_only"
+                else:
+                    visual_box = transformed_bbox_visual(
+                        source_target.bbox_erp,
+                        source_scene,
+                        yaw_shift_deg=yaw_shift_deg,
+                        pitch_shift_deg=pitch_shift_deg,
+                    )
+                    source_name = "bbox_recomputed_from_source_scene_rotation_visual"
                 if visual_box is not None:
-                    return visual_box, "bbox_recomputed_from_source_scene_rotation_visual"
+                    return visual_box, source_name
 
     # If we actually loaded derived-scene metadata, use its bbox directly.
     if scene.scene_id == item_scene_id or (effective_derived_id and scene.scene_id == effective_derived_id):
