@@ -22,6 +22,7 @@ from erp_spatial_benchmark._vendor.schemas import SceneMetadata
 from erp_spatial_benchmark.build_benchmark import (
     find_entity,
     pick_variant,
+    transformed_bbox,
     write_pitch_rotated_erp_image,
     write_yaw_shifted_erp_image,
 )
@@ -233,6 +234,46 @@ def rebuild_missing_derived_image(
     return expected_path, "rebuilt_from_source_scene"
 
 
+def resolve_target_box(item: Dict[str, Any], scene: SceneMetadata, scene_path: Path, target_id: str) -> Tuple[Optional[Sequence[float]], str]:
+    target = find_entity(scene, target_id)
+    if target is None:
+        return None, "target_entity_not_found"
+
+    item_scene_id = str(item.get("scene_id", "")).strip()
+    metadata = item.get("metadata") or {}
+    derived_scene_id = str((metadata.get("derived_rotation") or {}).get("derived_scene_id", "")).strip()
+    source_scene_id = str((metadata.get("derived_rotation") or {}).get("source_scene_id", "")).strip()
+    effective_derived_id = derived_scene_id or item_scene_id
+
+    # If we actually loaded derived-scene metadata, use its bbox directly.
+    if scene.scene_id == item_scene_id or (effective_derived_id and scene.scene_id == effective_derived_id):
+        if len(target.bbox_erp) == 4:
+            return target.bbox_erp, "bbox_erp_current_scene"
+        return None, "target_bbox_missing_in_loaded_scene"
+
+    # If this looks like a derived item but we only resolved source-scene metadata,
+    # recompute the transformed ERP box from the source entity and parsed rotation.
+    if source_scene_id and scene.scene_id == source_scene_id:
+        rotation = parse_rotation_from_name(item_scene_id) or parse_rotation_from_name(str(Path(str(item.get("image_path", ""))).stem))
+        if rotation is not None:
+            yaw_shift_deg, pitch_shift_deg = rotation
+            bbox, _ = transformed_bbox(
+                target,
+                scene,
+                yaw_shift_deg=yaw_shift_deg,
+                pitch_shift_deg=pitch_shift_deg,
+            )
+            if len(bbox) == 4:
+                return bbox, "bbox_recomputed_from_source_scene_rotation"
+        if len(target.bbox_erp) == 4:
+            return target.bbox_erp, "bbox_erp_source_scene_fallback"
+        return None, "target_bbox_missing_after_source_scene_fallback"
+
+    if len(target.bbox_erp) == 4:
+        return target.bbox_erp, "bbox_erp_generic_fallback"
+    return None, "target_bbox_missing_generic"
+
+
 def clip_box(box: Sequence[float], width: int, height: int) -> Tuple[float, float, float, float]:
     x1, y1, x2, y2 = [float(value) for value in box]
     return (
@@ -303,10 +344,10 @@ def main() -> int:
             output_rows.append(item)
             continue
         target_id = str(target_entities[0])
-        target = find_entity(scene, target_id)
-        if target is None or len(target.bbox_erp) != 4:
+        target_box, target_box_source = resolve_target_box(item, scene, scene_path, target_id)
+        if target_box is None:
             report["skipped"] += 1
-            failures.append({"item_id": item.get("item_id", ""), "reason": "target_bbox_missing"})
+            failures.append({"item_id": item.get("item_id", ""), "reason": target_box_source})
             output_rows.append(item)
             continue
 
@@ -344,7 +385,7 @@ def main() -> int:
             continue
 
         dst_image = image_dir / f"{item.get('item_id', src_image.stem)}{src_image.suffix}"
-        annotate_target_box(src_image, dst_image, target.bbox_erp, str(args.box_color), int(args.box_width))
+        annotate_target_box(src_image, dst_image, target_box, str(args.box_color), int(args.box_width))
 
         item["image_path"] = str(dst_image)
         item["question"] = pick_variant(
@@ -357,7 +398,8 @@ def main() -> int:
         item["metadata"]["visual_prompt"] = {
             "type": "red_box",
             "target_entity_id": target_id,
-            "bbox_erp": [round(float(value), 2) for value in target.bbox_erp],
+            "bbox_erp": [round(float(value), 2) for value in target_box],
+            "bbox_source": target_box_source,
             "source_image_path": str(src_image),
         }
         item["diagnostic_slices"] = sorted(set(item.get("diagnostic_slices") or []) | {"visual_prompt"})
