@@ -5,6 +5,7 @@ import argparse
 import copy
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
@@ -40,6 +41,12 @@ def parse_args() -> argparse.Namespace:
         "--output-root",
         default="",
         help="Directory for generated red-box images. Defaults to <output-jsonl-dir>/polar_shape_visual_prompt.",
+    )
+    parser.add_argument(
+        "--image-search-roots",
+        nargs="*",
+        default=[],
+        help="Optional fallback roots to search by image filename when item.image_path is missing. Found files are copied back to the original expected path before rewriting.",
     )
     parser.add_argument("--box-color", default="#ff2d2d")
     parser.add_argument("--box-width", type=int, default=6)
@@ -119,6 +126,31 @@ def resolve_scene_metadata_path(item: Dict[str, Any], scene_index: Dict[str, Pat
     return None
 
 
+def discover_image_paths(roots: Sequence[Path]) -> Dict[str, Path]:
+    image_index: Dict[str, Path] = {}
+    for root in roots:
+        if not root.exists():
+            continue
+        if root.is_file():
+            candidates = [root]
+        else:
+            candidates = [path for path in root.rglob("*") if path.is_file()]
+        for path in candidates:
+            image_index.setdefault(path.name, path)
+    return image_index
+
+
+def restore_missing_image(expected_path: Path, image_index: Dict[str, Path]) -> Optional[Path]:
+    if expected_path.exists():
+        return expected_path
+    source = image_index.get(expected_path.name)
+    if source is None or not source.exists():
+        return None
+    expected_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, expected_path)
+    return expected_path
+
+
 def clip_box(box: Sequence[float], width: int, height: int) -> Tuple[float, float, float, float]:
     x1, y1, x2, y2 = [float(value) for value in box]
     return (
@@ -160,6 +192,7 @@ def main() -> int:
     image_dir.mkdir(parents=True, exist_ok=True)
 
     scene_index = discover_scene_metadata_paths([Path(path) for path in args.metadata_roots])
+    image_index = discover_image_paths([Path(path) for path in args.image_search_roots])
     output_rows = []
     report = {"rewritten": 0, "skipped": 0}
     failures = []
@@ -193,6 +226,17 @@ def main() -> int:
             continue
 
         src_image = Path(str(item.get("image_path", "")))
+        if not src_image.exists():
+            restored = restore_missing_image(src_image, image_index)
+            if restored is not None:
+                src_image = restored
+                report["restored_missing_source_image"] += 1
+            else:
+                source_image_path = str(((item.get("metadata") or {}).get("visual_prompt") or {}).get("source_image_path", "")).strip()
+                if source_image_path:
+                    candidate = Path(source_image_path)
+                    if candidate.exists():
+                        src_image = candidate
         if not src_image.exists():
             report["skipped"] += 1
             failures.append({"item_id": item.get("item_id", ""), "reason": "image_not_found"})
@@ -229,6 +273,7 @@ def main() -> int:
                 "output_jsonl": str(output_jsonl),
                 "output_root": str(output_root),
                 "scene_index_size": len(scene_index),
+                "image_index_size": len(image_index),
                 "counts": report,
                 "failure_examples": failures[:50],
             },
