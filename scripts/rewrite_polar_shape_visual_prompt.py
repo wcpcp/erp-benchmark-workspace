@@ -5,6 +5,7 @@ import argparse
 import copy
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -17,11 +18,21 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from erp_spatial_benchmark._vendor.schemas import SceneMetadata
-from erp_spatial_benchmark.build_benchmark import find_entity, pick_variant
+from erp_spatial_benchmark.build_benchmark import (
+    find_entity,
+    pick_variant,
+    write_pitch_rotated_erp_image,
+    write_yaw_shifted_erp_image,
+)
 
 POLAR_VISUAL_TEMPLATES = [
     "What is the actual shape of the objects drawn in red box in this ERP panorama?",
     "Which shape best matches the real shape of the object drawn in the red box?",
+]
+ROTATION_PATTERNS = [
+    re.compile(r"__observer_distance_rot_y(?P<yaw>-?\d+)_p(?P<pitch>-?\d+)_"),
+    re.compile(r"__polar_pitch_(?P<pitch>-?\d+)_"),
+    re.compile(r"__[^_].*?_yaw_(?P<yaw>-?\d+)_"),
 ]
 
 
@@ -140,6 +151,17 @@ def discover_image_paths(roots: Sequence[Path]) -> Dict[str, Path]:
     return image_index
 
 
+def summarize_search_roots(roots: Sequence[Path]) -> Dict[str, Dict[str, Any]]:
+    summary: Dict[str, Dict[str, Any]] = {}
+    for root in roots:
+        summary[str(root)] = {
+            "exists": root.exists(),
+            "is_file": root.is_file(),
+            "is_dir": root.is_dir(),
+        }
+    return summary
+
+
 def restore_missing_image(expected_path: Path, image_index: Dict[str, Path]) -> Optional[Path]:
     if expected_path.exists():
         return expected_path
@@ -149,6 +171,65 @@ def restore_missing_image(expected_path: Path, image_index: Dict[str, Path]) -> 
     expected_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, expected_path)
     return expected_path
+
+
+def parse_rotation_from_name(text: str) -> Optional[Tuple[float, float]]:
+    for pattern in ROTATION_PATTERNS:
+        match = pattern.search(text)
+        if match is None:
+            continue
+        yaw = float(match.groupdict().get("yaw") or 0.0)
+        pitch = float(match.groupdict().get("pitch") or 0.0)
+        if abs(yaw) > 1e-6 or abs(pitch) > 1e-6:
+            return yaw, pitch
+    return None
+
+
+def rebuild_rotated_image(src_image: Path, dst_image: Path, *, yaw_shift_deg: float, pitch_shift_deg: float) -> None:
+    if abs(yaw_shift_deg) > 1e-6 and abs(pitch_shift_deg) > 1e-6:
+        tmp_dir = dst_image.parent / "_tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp_image = tmp_dir / f"{dst_image.stem}__yaw_tmp{dst_image.suffix}"
+        write_yaw_shifted_erp_image(src_image, tmp_image, yaw_shift_deg)
+        write_pitch_rotated_erp_image(tmp_image, dst_image, pitch_shift_deg)
+        tmp_image.unlink(missing_ok=True)
+    elif abs(yaw_shift_deg) > 1e-6:
+        write_yaw_shifted_erp_image(src_image, dst_image, yaw_shift_deg)
+    elif abs(pitch_shift_deg) > 1e-6:
+        write_pitch_rotated_erp_image(src_image, dst_image, pitch_shift_deg)
+    else:
+        dst_image.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_image, dst_image)
+
+
+def rebuild_missing_derived_image(
+    expected_path: Path,
+    item: Dict[str, Any],
+    scene_index: Dict[str, Path],
+    image_index: Dict[str, Path],
+) -> Tuple[Optional[Path], Optional[str]]:
+    metadata = item.get("metadata") or {}
+    source_scene_id = str((metadata.get("derived_rotation") or {}).get("source_scene_id", "")).strip()
+    if not source_scene_id:
+        return None, "no_source_scene_id"
+    source_scene_path = scene_index.get(source_scene_id)
+    if source_scene_path is None:
+        return None, "source_scene_metadata_not_found"
+    source_scene = load_scene_from_path(source_scene_path)
+    source_image = Path(str(source_scene.erp_image_path))
+    if not source_image.exists():
+        restored = restore_missing_image(source_image, image_index)
+        if restored is not None:
+            source_image = restored
+        else:
+            return None, "source_image_not_found"
+    rotation = parse_rotation_from_name(str(item.get("scene_id", ""))) or parse_rotation_from_name(expected_path.stem)
+    if rotation is None:
+        return None, "rotation_suffix_not_parsed"
+    yaw_shift_deg, pitch_shift_deg = rotation
+    expected_path.parent.mkdir(parents=True, exist_ok=True)
+    rebuild_rotated_image(source_image, expected_path, yaw_shift_deg=yaw_shift_deg, pitch_shift_deg=pitch_shift_deg)
+    return expected_path, "rebuilt_from_source_scene"
 
 
 def clip_box(box: Sequence[float], width: int, height: int) -> Tuple[float, float, float, float]:
@@ -191,8 +272,11 @@ def main() -> int:
     image_dir = output_root / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
 
-    scene_index = discover_scene_metadata_paths([Path(path) for path in args.metadata_roots])
-    image_index = discover_image_paths([Path(path) for path in args.image_search_roots])
+    metadata_roots = [Path(path) for path in args.metadata_roots]
+    image_search_roots = [Path(path) for path in args.image_search_roots]
+    scene_index = discover_scene_metadata_paths(metadata_roots)
+    image_index = discover_image_paths(image_search_roots)
+    image_search_root_status = summarize_search_roots(image_search_roots)
     output_rows = []
     report = {"rewritten": 0, "skipped": 0}
     failures = []
@@ -238,8 +322,23 @@ def main() -> int:
                     if candidate.exists():
                         src_image = candidate
         if not src_image.exists():
+            rebuilt, reason = rebuild_missing_derived_image(src_image, item, scene_index, image_index)
+            if rebuilt is not None:
+                src_image = rebuilt
+                report["rebuilt_missing_derived_image"] += 1
+            elif reason:
+                report[f"image_resolution_{reason}"] += 1
+        if not src_image.exists():
             report["skipped"] += 1
-            failures.append({"item_id": item.get("item_id", ""), "reason": "image_not_found"})
+            failures.append(
+                {
+                    "item_id": item.get("item_id", ""),
+                    "reason": "image_not_found",
+                    "expected_image_path": str(Path(str(item.get("image_path", "")))),
+                    "scene_id": str(item.get("scene_id", "")),
+                    "scene_metadata_path": str(scene_path),
+                }
+            )
             output_rows.append(item)
             continue
 
@@ -274,6 +373,8 @@ def main() -> int:
                 "output_root": str(output_root),
                 "scene_index_size": len(scene_index),
                 "image_index_size": len(image_index),
+                "image_search_roots": [str(path) for path in image_search_roots],
+                "image_search_root_status": image_search_root_status,
                 "counts": report,
                 "failure_examples": failures[:50],
             },
