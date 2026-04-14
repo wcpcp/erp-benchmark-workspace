@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 import os
 import re
 import shutil
@@ -12,6 +13,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
 
+import numpy as np
 from PIL import Image, ImageDraw
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -20,11 +22,15 @@ if str(REPO_ROOT) not in sys.path:
 
 from erp_spatial_benchmark._vendor.schemas import SceneMetadata
 from erp_spatial_benchmark.build_benchmark import (
+    erp_x_to_yaw,
+    erp_y_to_pitch,
     find_entity,
+    pitch_to_erp_y,
     pick_variant,
-    transformed_bbox,
+    rotate_yaw_pitch,
     write_pitch_rotated_erp_image,
     write_yaw_shifted_erp_image,
+    yaw_to_erp_x,
 )
 
 POLAR_VISUAL_TEMPLATES = [
@@ -234,7 +240,62 @@ def rebuild_missing_derived_image(
     return expected_path, "rebuilt_from_source_scene"
 
 
-def resolve_target_box(item: Dict[str, Any], scene: SceneMetadata, scene_path: Path, target_id: str) -> Tuple[Optional[Sequence[float]], str]:
+def transformed_bbox_visual(entity_box: Sequence[float], scene: SceneMetadata, *, yaw_shift_deg: float = 0.0, pitch_shift_deg: float = 0.0) -> Optional[Sequence[float]]:
+    width = int(scene.erp_width or 0)
+    height = int(scene.erp_height or 0)
+    if width <= 0 or height <= 0 or len(entity_box) != 4:
+        return None
+
+    x1, y1, x2, y2 = [float(v) for v in entity_box]
+    xs = np.linspace(x1, x2, num=5)
+    ys = np.linspace(y1, y2, num=5)
+    sample_points = [(sx, sy) for sx in xs for sy in ys]
+
+    rotated_xs: list[float] = []
+    rotated_ys: list[float] = []
+    for sx, sy in sample_points:
+        yaw_old = erp_x_to_yaw(sx, width)
+        pitch_old = erp_y_to_pitch(sy, height)
+        yaw_new, pitch_new = rotate_yaw_pitch(
+            yaw_old,
+            pitch_old,
+            yaw_shift_deg=yaw_shift_deg,
+            pitch_shift_deg=pitch_shift_deg,
+        )
+        rotated_xs.append(yaw_to_erp_x(yaw_new, width) % float(width))
+        rotated_ys.append(min(float(height), max(0.0, pitch_to_erp_y(pitch_new, height))))
+
+    if not rotated_xs or not rotated_ys:
+        return None
+
+    rotated_xs.sort()
+    largest_gap = -1.0
+    largest_gap_index = 0
+    for idx in range(len(rotated_xs)):
+        current = rotated_xs[idx]
+        nxt = rotated_xs[(idx + 1) % len(rotated_xs)]
+        gap = (nxt - current) if idx + 1 < len(rotated_xs) else (nxt + float(width) - current)
+        if gap > largest_gap:
+            largest_gap = gap
+            largest_gap_index = idx
+
+    start = rotated_xs[(largest_gap_index + 1) % len(rotated_xs)]
+    end = rotated_xs[largest_gap_index]
+    y_min = min(rotated_ys)
+    y_max = max(rotated_ys)
+    if start > end:
+        # Preserve seam wrap for visualization by returning x1 > x2.
+        return [start, y_min, end, y_max]
+    return [start, y_min, end, y_max]
+
+
+def resolve_target_box(
+    item: Dict[str, Any],
+    scene: SceneMetadata,
+    scene_path: Path,
+    target_id: str,
+    scene_index: Dict[str, Path],
+) -> Tuple[Optional[Sequence[float]], str]:
     target = find_entity(scene, target_id)
     if target is None:
         return None, "target_entity_not_found"
@@ -245,6 +306,26 @@ def resolve_target_box(item: Dict[str, Any], scene: SceneMetadata, scene_path: P
     source_scene_id = str((metadata.get("derived_rotation") or {}).get("source_scene_id", "")).strip()
     effective_derived_id = derived_scene_id or item_scene_id
 
+    rotation = parse_rotation_from_name(item_scene_id) or parse_rotation_from_name(str(Path(str(item.get("image_path", ""))).stem))
+
+    # If this item is derived and we know its source scene, prefer recomputing a
+    # wrap-preserving box from the source scene even when derived metadata exists.
+    if source_scene_id and rotation is not None:
+        source_scene_path = scene_index.get(source_scene_id)
+        if source_scene_path is not None:
+            source_scene = load_scene_from_path(source_scene_path)
+            source_target = find_entity(source_scene, target_id)
+            if source_target is not None and len(source_target.bbox_erp) == 4:
+                yaw_shift_deg, pitch_shift_deg = rotation
+                visual_box = transformed_bbox_visual(
+                    source_target.bbox_erp,
+                    source_scene,
+                    yaw_shift_deg=yaw_shift_deg,
+                    pitch_shift_deg=pitch_shift_deg,
+                )
+                if visual_box is not None:
+                    return visual_box, "bbox_recomputed_from_source_scene_rotation_visual"
+
     # If we actually loaded derived-scene metadata, use its bbox directly.
     if scene.scene_id == item_scene_id or (effective_derived_id and scene.scene_id == effective_derived_id):
         if len(target.bbox_erp) == 4:
@@ -252,19 +333,8 @@ def resolve_target_box(item: Dict[str, Any], scene: SceneMetadata, scene_path: P
         return None, "target_bbox_missing_in_loaded_scene"
 
     # If this looks like a derived item but we only resolved source-scene metadata,
-    # recompute the transformed ERP box from the source entity and parsed rotation.
+    # use the source-scene box as a last resort.
     if source_scene_id and scene.scene_id == source_scene_id:
-        rotation = parse_rotation_from_name(item_scene_id) or parse_rotation_from_name(str(Path(str(item.get("image_path", ""))).stem))
-        if rotation is not None:
-            yaw_shift_deg, pitch_shift_deg = rotation
-            bbox, _ = transformed_bbox(
-                target,
-                scene,
-                yaw_shift_deg=yaw_shift_deg,
-                pitch_shift_deg=pitch_shift_deg,
-            )
-            if len(bbox) == 4:
-                return bbox, "bbox_recomputed_from_source_scene_rotation"
         if len(target.bbox_erp) == 4:
             return target.bbox_erp, "bbox_erp_source_scene_fallback"
         return None, "target_bbox_missing_after_source_scene_fallback"
@@ -344,7 +414,7 @@ def main() -> int:
             output_rows.append(item)
             continue
         target_id = str(target_entities[0])
-        target_box, target_box_source = resolve_target_box(item, scene, scene_path, target_id)
+        target_box, target_box_source = resolve_target_box(item, scene, scene_path, target_id, scene_index)
         if target_box is None:
             report["skipped"] += 1
             failures.append({"item_id": item.get("item_id", ""), "reason": target_box_source})
